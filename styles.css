@@ -94,6 +94,10 @@ input:focus,select:focus,button:focus-visible{outline:2px solid var(--accent);ou
 .egrid .blk.other{opacity:.22;pointer-events:none;color:var(--ink)}
 .egrid .blk.ghost{opacity:.55;pointer-events:none;border:1.5px dashed #fff}
 .egrid .blk.editing{outline:2px solid var(--ink);outline-offset:1px;z-index:3}
+.egrid .blk .rs{position:absolute;left:0;right:0;height:6px;cursor:ns-resize}
+.egrid .blk .rs.t{top:0}
+.egrid .blk .rs.b{bottom:0}
+.egrid .blk.dragging{z-index:4;opacity:1;cursor:grabbing;box-shadow:0 4px 12px rgba(0,0,0,.25)}
 .lbled{position:absolute;z-index:5;display:flex;gap:4px;align-items:center;background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:4px;box-shadow:0 6px 18px rgba(0,0,0,.18);width:190px}
 .lbled input{flex:1;min-width:0;padding:4px 6px}
 .lbled button{padding:3px 6px;font-size:12px}

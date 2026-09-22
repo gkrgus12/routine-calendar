@@ -92,6 +92,7 @@
 
 1. **상태 · 충돌 로직**: 상수(`KEY`, `DAYS`, `PCOL`), 유틸(`toMin`, `fromMin`, `ymd`, `wd`, `overlap`…), `load`/`save`, `view` 상태, `activeItems`/`eventConflicts`/`pageConflicts`
 2. **렌더링**: `render()` 가 `#app` 을 통째로 다시 그린다. `h()` 로 DOM 생성. 사이드바, 월간, 주간, 페이지 편집기, 드래그 그리드, 라벨 편집기
+   - 편집 그리드 블록 조작(`renderEditGrid`): 본체 드래그=이동(요일 간 이동 가능), 상단/하단 6px 핸들(`.rs`)=시작/끝 조절. 30분 스냅, 최소 30분, 06:00~24:00 안으로 클램프. 5px 미만 움직임은 클릭(이름 편집기). 드래그 중엔 시간 텍스트만 바꾸고 놓을 때 `save()`+`render()`. 블록을 누르면 열려 있던 이름 편집기는 `settleLabelEditor()` 로 렌더 없이 확정한다 (드래그 도중 재렌더 방지)
 3. **이벤트 모달 · 설정 · 토스트**: `openEvent`, `openSettings`, `toast`
 
 상태가 바뀌면 `save()` 후 `render()` 를 호출하는 단순한 방식. 부분 갱신·가상 DOM 없음.

@@ -228,7 +228,7 @@ function renderPage(main){
     h('input',{type:'text',value:p.name,placeholder:'페이지 이름 (예: 학교 시간표, 운동)',oninput:(e)=>{p.name=e.target.value;save();document.querySelectorAll('.side .nav li .nm').forEach(()=>{});},onchange:()=>render()}),
     sw
   ]));
-  ed.appendChild(h('p',{class:'sub',style:'margin-top:12px'},['빈 칸을 드래그하면 루틴이 생겨요 (30분 단위). 블록을 클릭하면 이름 수정·삭제. 흐린 블록은 다른 활성 페이지의 루틴.']));
+  ed.appendChild(h('p',{class:'sub',style:'margin-top:12px'},['빈 칸을 드래그하면 루틴이 생겨요 (30분 단위). 블록을 끌면 이동, 위·아래 가장자리를 끌면 시간 조절. 클릭하면 이름 수정·삭제. 흐린 블록은 다른 활성 페이지의 루틴.']));
   ed.appendChild(renderEditGrid(p));
   ed.appendChild(h('p',{class:'sub'},['목록에서 시간을 정확히 고칠 수 있어요.']));
   const tbl=h('table');
@@ -267,8 +267,10 @@ function renderEditGrid(p){
   grid.appendChild(tc);
   const col=PCOL[p.color%PCOL.length];
   const others=activeItems(p.id);
+  const cols=[]; // 요일 컬럼 엘리먼트 (블록을 다른 요일로 옮길 때 참조)
+  const dayAt=x=>{for(let i=0;i<7;i++){if(x<cols[i].getBoundingClientRect().right)return i}return 6};
   for(let day=0;day<7;day++){
-    const c=h('div',{class:'tcol',style:'height:'+height+'px','data-day':day});
+    const c=h('div',{class:'tcol',style:'height:'+height+'px','data-day':day});cols[day]=c;
     for(let hr=H0;hr<=H1;hr++){c.appendChild(h('div',{class:'hrline',style:'top:'+((hr-H0)*PX)+'px'}));if(hr<H1)c.appendChild(h('div',{class:'hrline half',style:'top:'+((hr-H0)*PX+PX/2)+'px'}))}
     others.filter(it=>it.day===day).forEach(it=>{
       const s=Math.max(toMin(it.start),H0*60),e=Math.min(toMin(it.end),H1*60);if(e<=s)return;
@@ -276,7 +278,48 @@ function renderEditGrid(p){
     });
     p.items.filter(it=>it.day===day&&it.start&&it.end).forEach(it=>{
       const s=Math.max(toMin(it.start),H0*60),e=Math.min(toMin(it.end),H1*60);if(e<=s)return;
-      c.appendChild(h('div',{class:'blk','data-id':it.id,style:`top:${(s-H0*60)/60*PX}px;height:${(e-s)/60*PX-2}px;background:${col}`,title:`${it.start}–${it.end} ${it.label||''}`,onpointerdown:(ev)=>{ev.stopPropagation()},onclick:(ev)=>{ev.stopPropagation();openLabelEditor(p,it,false,grid)}},[h('div',{class:'l'},[it.label||'(이름 없음)'])]));
+      const lbl=h('div',{class:'l'},[it.label||'(이름 없음)']);
+      const blk=h('div',{class:'blk','data-id':it.id,style:`top:${(s-H0*60)/60*PX}px;height:${(e-s)/60*PX-2}px;background:${col}`,title:`${it.start}–${it.end} ${it.label||''}`},[lbl,h('div',{class:'rs t'}),h('div',{class:'rs b'})]);
+      // 블록 조작: 본체 드래그=이동(다른 요일로도), 상단/하단 6px(.rs)=시작/끝 시간 조절. 30분 스냅, 최소 30분.
+      // 5px 미만 움직임으로 놓으면 클릭 → 이름 편집기. 드래그 중엔 시간 텍스트를 실시간 표시하고 놓을 때 저장.
+      let d=null;
+      const paintBlk=()=>{
+        const s=Math.max(d.s,H0*60),e=Math.min(d.e,H1*60);
+        blk.style.top=((s-H0*60)/60*PX)+'px';blk.style.height=Math.max(0,(e-s)/60*PX-2)+'px';
+        blk.style.transform=d.day===d.day0?'':`translateX(${cols[d.day].offsetLeft-cols[d.day0].offsetLeft}px)`;
+        lbl.textContent=fromMin(d.s)+'–'+fromMin(d.e);
+      };
+      blk.addEventListener('pointerdown',ev=>{
+        ev.stopPropagation();
+        if(ev.button!==0&&ev.pointerType==='mouse')return;
+        settleLabelEditor(it);
+        const t=ev.target.classList;const mode=t.contains('rs')?(t.contains('t')?'top':'bottom'):'move';
+        const s0=toMin(it.start),e0=toMin(it.end);
+        d={mode,x0:ev.clientX,y0:ev.clientY,s0,e0,day0:day,s:s0,e:e0,day,moved:false};
+        blk.setPointerCapture(ev.pointerId);
+      });
+      blk.addEventListener('pointermove',ev=>{
+        if(!d)return;
+        const dx=ev.clientX-d.x0,dy=ev.clientY-d.y0;
+        if(!d.moved){if(Math.hypot(dx,dy)<5)return;d.moved=true;blk.classList.add('dragging')}
+        const dm=Math.round(dy/SPX)*SLOT;
+        if(d.mode==='move'){
+          const dur=d.e0-d.s0;
+          d.s=Math.min(Math.max(d.s0+dm,H0*60),Math.max(H0*60,H1*60-dur));d.e=Math.min(d.s+dur,H1*60);d.day=dayAt(ev.clientX);
+        }else if(d.mode==='top'){
+          d.s=Math.min(Math.max(d.s0+dm,H0*60),Math.max(H0*60,d.e0-SLOT));
+        }else{
+          d.e=Math.max(Math.min(d.e0+dm,H1*60),Math.min(H1*60,d.s0+SLOT));
+        }
+        paintBlk();
+      });
+      blk.addEventListener('pointerup',()=>{
+        if(!d)return;const cur=d;d=null;
+        if(!cur.moved){openLabelEditor(p,it,false,grid);return}
+        it.start=fromMin(cur.s);it.end=fromMin(cur.e);it.day=cur.day;save();render();
+      });
+      blk.addEventListener('pointercancel',()=>{if(!d)return;d=null;render()});
+      c.appendChild(blk);
     });
     // drag to create
     let drag=null,ghost=null;
@@ -304,6 +347,12 @@ function renderEditGrid(p){
 }
 let lblEd=null;
 function closeLabelEditor(){if(lblEd){lblEd.el.remove();lblEd.blk&&lblEd.blk.classList.remove('editing');lblEd=null}}
+function settleLabelEditor(keep){ // 열린 이름 편집기를 렌더 없이 확정. 새 항목이 빈 이름이면 삭제(단 keep 항목은 유지). 블록 드래그 직전에 씀
+  if(!lblEd)return;
+  const {p,it,isNew,inp,blk}=lblEd;const v=inp.value.trim();
+  if(isNew&&!v&&it!==keep){p.items=p.items.filter(x=>x!==it);blk&&blk.remove()}else it.label=v;
+  save();closeLabelEditor();
+}
 function openLabelEditor(p,it,isNew,grid){
   closeLabelEditor();
   const blk=grid.querySelector(`.blk[data-id="${it.id}"]`);if(!blk)return;
@@ -322,7 +371,7 @@ function openLabelEditor(p,it,isNew,grid){
   let left=colEl.offsetLeft;if(left+190>gridW)left=Math.max(0,gridW-194);
   el.style.top=top+'px';el.style.left=left+'px';
   grid.appendChild(el);
-  lblEd={el,inp,blk};
+  lblEd={el,inp,blk,p,it,isNew};
   inp.focus();inp.select();
 }
 
