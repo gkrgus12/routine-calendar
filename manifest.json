@@ -1,0 +1,14 @@
+{
+  "name": "루틴 캘린더",
+  "short_name": "루틴 캘린더",
+  "description": "요일별 루틴 페이지와 약속을 한 곳에서 보고, 겹치는 시간을 경고하는 개인용 캘린더",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "lang": "ko",
+  "background_color": "#F2F4F6",
+  "theme_color": "#2B6E8F",
+  "icons": [
+    { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }
+  ]
+}
