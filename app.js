@@ -29,10 +29,17 @@ function save(){try{localStorage.setItem(KEY,JSON.stringify(S))}catch(e){}}
 // 테마: settings.theme = 'system' | 'light' | 'dark' (없으면 system). <html data-theme> 로 CSS 에 전달하고, 첫 렌더 전에 적용
 function applyTheme(){const t=S.settings.theme;if(t==='light'||t==='dark')document.documentElement.setAttribute('data-theme',t);else document.documentElement.removeAttribute('data-theme')}
 applyTheme();
+// 설정 기본값. 저장값에 없는 키는 기본값으로 읽는다(cfg). weekStart: 'mon'|'sun' (표시 순서만 바뀌고 데이터의 day 는 항상 0=월…6=일),
+// dayStart/dayEnd: 주간 뷰·편집 그리드가 보여줄 시간 범위(시). 범위 밖 루틴은 잘려 보일 뿐 데이터는 그대로
+const SETTINGS_DEFAULTS={defaultStart:'10:00',defaultDur:60,theme:'system',weekStart:'mon',dayStart:6,dayEnd:24};
+const cfg=k=>S.settings[k]===undefined?SETTINGS_DEFAULTS[k]:S.settings[k];
+const dayOrder=()=>cfg('weekStart')==='sun'?[6,0,1,2,3,4,5]:[0,1,2,3,4,5,6]; // 요일 표시 순서
+const dayPos=d=>dayOrder().indexOf(d);
 
 const today=ymd(new Date());
-let view={type:'month',ym:today.slice(0,7),pageId:null,weekStart:mondayOf(new Date())};
-function mondayOf(d){const x=new Date(d);x.setDate(x.getDate()-wd(x));x.setHours(0,0,0,0);return x}
+let view={type:'month',ym:today.slice(0,7),pageId:null,weekStart:weekStartOf(new Date())};
+// 설정의 주 시작 요일(월/일)에 맞춘, d 가 속한 주의 첫날
+function weekStartOf(d){const x=new Date(d);const back=cfg('weekStart')==='sun'?x.getDay():wd(x);x.setDate(x.getDate()-back);x.setHours(0,0,0,0);return x}
 
 /* ---------- backup (JSON 내보내기/가져오기) ---------- */
 // 파일 형식: {version:1, exportedAt, pages, events, settings}. 가져올 때 version 과 각 레코드를 엄격히 검사하고,
@@ -75,6 +82,12 @@ function validateBackup(obj){
     if(!isTime(st.defaultStart)||!(Number.isFinite(st.defaultDur)&&st.defaultDur>=5))throw new Error('settings: defaultStart(HH:MM)·defaultDur(5 이상) 를 확인하세요');
     const settings={defaultStart:st.defaultStart,defaultDur:st.defaultDur};
     if(['system','light','dark'].includes(st.theme))settings.theme=st.theme;
+    if(st.weekStart!==undefined){if(!['mon','sun'].includes(st.weekStart))throw new Error('settings: weekStart 는 mon 또는 sun 이에요');settings.weekStart=st.weekStart}
+    if(st.dayStart!==undefined||st.dayEnd!==undefined){
+      const a=st.dayStart===undefined?SETTINGS_DEFAULTS.dayStart:st.dayStart,b=st.dayEnd===undefined?SETTINGS_DEFAULTS.dayEnd:st.dayEnd;
+      if(!Number.isInteger(a)||!Number.isInteger(b)||a<0||b>24||a>=b)throw new Error('settings: dayStart/dayEnd 는 0~24 정수이고 dayStart < dayEnd 여야 해요');
+      if(st.dayStart!==undefined)settings.dayStart=a;if(st.dayEnd!==undefined)settings.dayEnd=b;
+    }
     return {data:{pages,events,settings,exportedAt:typeof obj.exportedAt==='string'?obj.exportedAt:null}};
   }catch(e){return fail(e.message)}
 }
@@ -165,7 +178,7 @@ function renderSide(){
   side.appendChild(h('h1',null,['루틴 캘린더']));
   const nav=h('ul',{class:'nav'});
   nav.appendChild(h('li',{class:view.type==='month'?'sel':'',onclick:()=>{view.type='month';render()}},[h('span',{class:'nm'},['월간 · 약속'])]));
-  nav.appendChild(h('li',{class:view.type==='week'?'sel':'',onclick:()=>{view.type='week';view.weekStart=mondayOf(new Date());render()}},[h('span',{class:'nm'},['이번 주 · 활성 루틴'])]));
+  nav.appendChild(h('li',{class:view.type==='week'?'sel':'',onclick:()=>{view.type='week';view.weekStart=weekStartOf(new Date());render()}},[h('span',{class:'nm'},['이번 주 · 활성 루틴'])]));
   side.appendChild(nav);
   side.appendChild(h('div',{class:'sec'},['루틴 페이지']));
   const pl=h('ul',{class:'nav'});
@@ -180,11 +193,6 @@ function renderSide(){
   });
   side.appendChild(pl);
   side.appendChild(h('button',{class:'add',onclick:addPage},['+ 새 루틴 페이지']));
-  // 테마 토글 (사이드바 맨 아래 세그먼트: 시스템 / 라이트 / 다크)
-  const cur=S.settings.theme||'system';
-  const seg=h('div',{class:'seg',role:'group','aria-label':'테마'});
-  [['system','시스템'],['light','라이트'],['dark','다크']].forEach(([k,label])=>seg.appendChild(h('button',{class:cur===k?'sel':'','aria-pressed':cur===k?'true':'false',onclick:()=>setTheme(k)},[label])));
-  side.appendChild(h('div',{class:'theme'},[h('span',{class:'tl'},['테마']),seg]));
   return side;
 }
 function setTheme(k){S.settings.theme=k;save();applyTheme();render()}
@@ -223,15 +231,14 @@ function renderMonth(main){
     h('button',{class:'quiet',onclick:()=>{shiftMonth(1)}},['›']),
     h('button',{class:'quiet',onclick:()=>{view.ym=today.slice(0,7);render()}},['오늘']),
     h('span',{class:'sp'}),
-    h('button',{class:'quiet',onclick:openBackup},['백업']),
-    h('button',{class:'quiet',onclick:openSettings},['약속 기본값']),
+    h('button',{class:'quiet',title:'설정',onclick:()=>openSettings()},['⚙ 설정']),
     h('button',{class:'primary',onclick:()=>openEvent(null,today)},['+ 약속'])
   ]);
   main.appendChild(bar);
   const body=h('div',{class:'body'});
   const grid=h('div',{class:'mgrid'});
-  DAYS.forEach(d=>grid.appendChild(h('div',{class:'hd'},[d])));
-  const first=new Date(y,m-1,1);const off=wd(first);
+  dayOrder().forEach(d=>grid.appendChild(h('div',{class:'hd'},[DAYS[d]])));
+  const first=new Date(y,m-1,1);const off=dayPos(wd(first));
   const start=new Date(y,m-1,1-off);
   const evByDate=indexEvents();
   for(let i=0;i<42;i++){
@@ -262,14 +269,14 @@ function indexEvents(){
 
 /* week */
 function renderWeek(main){
-  const ws=view.weekStart;const we=new Date(ws);we.setDate(ws.getDate()+6);
+  view.weekStart=weekStartOf(view.weekStart||new Date());const ws=view.weekStart;const we=new Date(ws);we.setDate(ws.getDate()+6);
   const bar=h('div',{class:'bar'},[
     h('button',{class:'quiet',onclick:()=>{view.weekStart.setDate(view.weekStart.getDate()-7);render()}},['‹']),
     h('h2',null,[`${ws.getMonth()+1}월 ${ws.getDate()}일 – ${we.getMonth()+1}월 ${we.getDate()}일`]),
     h('button',{class:'quiet',onclick:()=>{view.weekStart.setDate(view.weekStart.getDate()+7);render()}},['›']),
-    h('button',{class:'quiet',onclick:()=>{view.weekStart=mondayOf(new Date());render()}},['이번 주']),
+    h('button',{class:'quiet',onclick:()=>{view.weekStart=weekStartOf(new Date());render()}},['이번 주']),
     h('span',{class:'sp'}),
-    h('button',{class:'quiet',onclick:openBackup},['백업']),
+    h('button',{class:'quiet',title:'설정',onclick:()=>openSettings()},['⚙ 설정']),
   ]);
   main.appendChild(bar);
   const body=h('div',{class:'body'});
@@ -279,11 +286,11 @@ function renderWeek(main){
   act.forEach(p=>lg.appendChild(h('span',null,[h('i',{style:'background:'+PCOL[p.color%PCOL.length]}),p.name])));
   lg.appendChild(h('span',null,[h('i',{style:'border:1.5px solid var(--ink);background:transparent'}),'약속']));
   body.appendChild(lg);
-  const H0=6,H1=24,PX=44;const height=(H1-H0)*PX;
+  const H0=cfg('dayStart'),H1=cfg('dayEnd'),PX=44;const height=(H1-H0)*PX;
   const wrap=h('div',{class:'wwrap'});
   const grid=h('div',{class:'wgrid'});
   grid.appendChild(h('div',{class:'whd'},['']));
-  const dates=[];for(let i=0;i<7;i++){const d=new Date(ws);d.setDate(ws.getDate()+i);dates.push(d);grid.appendChild(h('div',{class:'whd'+(ymd(d)===today?' today':'')},[`${DAYS[i]} ${d.getDate()}`]))}
+  const dates=[];for(let i=0;i<7;i++){const d=new Date(ws);d.setDate(ws.getDate()+i);dates.push(d);grid.appendChild(h('div',{class:'whd'+(ymd(d)===today?' today':'')},[`${DAYS[wd(d)]} ${d.getDate()}`]))}
   const tc=h('div',{class:'tcol first',style:'height:'+height+'px'});
   for(let hr=H0;hr<=H1;hr++){const top=(hr-H0)*PX;tc.appendChild(h('div',{class:'hrline',style:'top:'+top+'px'}));if(hr<H1)tc.appendChild(h('div',{class:'hrlab',style:'top:'+top+'px'},[pad(hr)+':00']))}
   grid.appendChild(tc);
@@ -292,7 +299,8 @@ function renderWeek(main){
     const col=h('div',{class:'tcol',style:'height:'+height+'px'});
     for(let hr=H0;hr<=H1;hr++)col.appendChild(h('div',{class:'hrline',style:'top:'+((hr-H0)*PX)+'px'}));
     const blocks=[];
-    act.forEach(p=>p.items.filter(it=>it.day===i&&it.start&&it.end).forEach(it=>{
+    const dow=wd(d);
+    act.forEach(p=>p.items.filter(it=>it.day===dow&&it.start&&it.end).forEach(it=>{
       const s=Math.max(toMin(it.start),H0*60),e=Math.min(toMin(it.end),H1*60);if(e<=s)return;
       blocks.push({s,e,it,p});
     }));
@@ -339,6 +347,7 @@ function renderPage(main){
   const bar=h('div',{class:'bar'},[
     h('h2',null,['루틴 페이지']),
     h('span',{class:'sp'}),
+    h('button',{class:'quiet',title:'설정',onclick:()=>openSettings()},['⚙ 설정']),
     h('button',{class:p.active?'':'primary',onclick:()=>togglePage(p)},[p.active?'비활성화':'활성화']),
     h('button',{class:'quiet danger',onclick:()=>{if(confirm(`「${p.name}」 페이지를 삭제할까요?`)){S.pages=S.pages.filter(x=>x!==p);save();view.type='month';render()}}},['삭제'])
   ]);
@@ -360,11 +369,11 @@ function renderPage(main){
   ed.appendChild(h('p',{class:'sub'},['목록에서 시간을 정확히 고칠 수 있어요.']));
   const tbl=h('table');
   tbl.appendChild(h('tr',null,[h('th',null,['요일']),h('th',null,['시작']),h('th',null,['끝']),h('th',null,['이름']),h('th',null,[''])]));
-  const sorted=[...p.items].sort((a,b)=>a.day-b.day||(a.start||'').localeCompare(b.start||''));
+  const sorted=[...p.items].sort((a,b)=>dayPos(a.day)-dayPos(b.day)||(a.start||'').localeCompare(b.start||''));
   sorted.forEach(it=>{
     const tr=h('tr');
     const sel=h('select',{onchange:(e)=>{it.day=Number(e.target.value);save()}});
-    DAYS.forEach((d,i)=>sel.appendChild(h('option',{value:i,...(i===it.day?{selected:''}:{})},[d])));
+    dayOrder().forEach(i=>sel.appendChild(h('option',{value:i,...(i===it.day?{selected:''}:{})},[DAYS[i]])));
     tr.appendChild(h('td',{class:'w1'},[sel]));
     tr.appendChild(h('td',{class:'w2'},[h('input',{type:'time',value:it.start,onchange:(e)=>{it.start=e.target.value;save()}})]));
     tr.appendChild(h('td',{class:'w2'},[h('input',{type:'time',value:it.end,onchange:(e)=>{it.end=e.target.value;save()}})]));
@@ -385,10 +394,11 @@ function renderPage(main){
 /* edit grid: drag to paint routines */
 let pendingEdit=null; // {itemId,isNew} — opened after render
 function renderEditGrid(p){
-  const H0=6,H1=24,PX=40,SLOT=30;const SPX=PX*SLOT/60;const height=(H1-H0)*PX;const nslots=(H1-H0)*60/SLOT;
+  const H0=cfg('dayStart'),H1=cfg('dayEnd'),PX=40,SLOT=30;const SPX=PX*SLOT/60;const height=(H1-H0)*PX;const nslots=(H1-H0)*60/SLOT;
+  const order=dayOrder();
   const wrap=h('div',{class:'egwrap'});const grid=h('div',{class:'egrid'});
   grid.appendChild(h('div',{class:'whd'},['']));
-  DAYS.forEach(d=>grid.appendChild(h('div',{class:'whd'},[d])));
+  order.forEach(d=>grid.appendChild(h('div',{class:'whd'},[DAYS[d]])));
   const tc=h('div',{class:'tcol first',style:'height:'+height+'px'});
   for(let hr=H0;hr<=H1;hr++){const top=(hr-H0)*PX;tc.appendChild(h('div',{class:'hrline',style:'top:'+top+'px'}));if(hr<H1)tc.appendChild(h('div',{class:'hrlab',style:'top:'+top+'px'},[pad(hr)+':00']))}
   grid.appendChild(tc);
@@ -400,8 +410,8 @@ function renderEditGrid(p){
   for(let a=0;a<its.length;a++)for(let b=a+1;b<its.length;b++){const x=its[a],y=its[b];
     if(x.day===y.day&&overlap(toMin(x.start),toMin(x.end),toMin(y.start),toMin(y.end))){ovl.add(x.id);ovl.add(y.id)}}
   const cols=[]; // 요일 컬럼 엘리먼트 (블록을 다른 요일로 옮길 때 참조)
-  const dayAt=x=>{for(let i=0;i<7;i++){if(x<cols[i].getBoundingClientRect().right)return i}return 6};
-  for(let day=0;day<7;day++){
+  const dayAt=x=>{for(const d of order){if(x<cols[d].getBoundingClientRect().right)return d}return order[6]};
+  for(const day of order){
     const c=h('div',{class:'tcol',style:'height:'+height+'px','data-day':day});cols[day]=c;
     for(let hr=H0;hr<=H1;hr++){c.appendChild(h('div',{class:'hrline',style:'top:'+((hr-H0)*PX)+'px'}));if(hr<H1)c.appendChild(h('div',{class:'hrline half',style:'top:'+((hr-H0)*PX+PX/2)+'px'}))}
     others.filter(it=>it.day===day).forEach(it=>{
@@ -505,7 +515,7 @@ function openLabelEditor(p,it,isNew,grid,opts){
   // 체크/해제하면 입력 중인 이름을 먼저 형제 전체에 확정하고, 형제를 만들거나 지운 뒤 다시 그리고 편집기를 같은 블록에 다시 연다
   const days=h('div',{class:'days'});
   const sib=siblingsOf(p,it);
-  DAYS.forEach((d,i)=>{
+  dayOrder().forEach(i=>{const d=DAYS[i];
     const has=i===it.day||sib.some(x=>x.day===i);
     const cb=h('input',{type:'checkbox',...(has?{checked:''}:{}),...(i===it.day?{disabled:''}:{}),onchange:(e)=>{
       const v=inp.value.trim();commitLabel(p,it,v);
@@ -535,8 +545,7 @@ function openLabelEditor(p,it,isNew,grid,opts){
 /* event modal */
 function openEvent(ev,dateKey){
   const isNew=!ev;
-  const st=S.settings;
-  const draft=ev?{...ev}:{id:uid(),title:'',startDate:dateKey||today,endDate:dateKey||today,startTime:st.defaultStart,endTime:fromMin(Math.min(toMin(st.defaultStart)+st.defaultDur,1439))};
+  const draft=ev?{...ev}:{id:uid(),title:'',startDate:dateKey||today,endDate:dateKey||today,startTime:cfg('defaultStart'),endTime:fromMin(Math.min(toMin(cfg('defaultStart'))+cfg('defaultDur'),1439))};
   const ov=h('div',{class:'ov',onclick:(e)=>{if(e.target===ov)close()}});
   const cfBox=h('div');
   function refreshCf(){
@@ -579,22 +588,7 @@ function openEvent(ev,dateKey){
   function close(){ov.remove();document.removeEventListener('keydown',onKey)}
   setTimeout(()=>{const t=md.querySelector('input[type=text]');t&&t.focus()},0);
 }
-function openSettings(){
-  const st=S.settings;const d={...st};
-  const ov=h('div',{class:'ov',onclick:(e)=>{if(e.target===ov)ov.remove()}});
-  const md=h('div',{class:'md'},[
-    h('h3',null,['약속 기본값']),
-    h('div',{class:'f'},[
-      h('label',null,['기본 시작 시간',h('input',{type:'time',value:d.defaultStart,onchange:(e)=>d.defaultStart=e.target.value})]),
-      h('label',null,['기본 길이(분)',h('input',{type:'number',min:'5',step:'5',value:d.defaultDur,onchange:(e)=>d.defaultDur=Math.max(5,Number(e.target.value)||60)})]),
-    ]),
-    h('p',{class:'hint'},['새 약속을 열 때 이 값으로 채워집니다. 날짜는 클릭한 날이 기본이에요.']),
-    h('div',{class:'acts'},[h('span',{class:'sp'}),h('button',{onclick:()=>ov.remove()},['취소']),h('button',{class:'primary',onclick:()=>{S.settings=d;save();ov.remove();toast('기본값을 저장했어요')}},['저장'])])
-  ]);
-  ov.appendChild(md);document.body.appendChild(ov);
-}
-
-/* backup modal */
+/* settings modal (좌측 탭: 일반 / 약속 / 백업). 모든 뷰의 상단바 ⚙ 설정 버튼으로 연다 */
 function exportBackup(){
   const name=`routine-calendar-${ymd(new Date())}.json`;
   const data={version:BACKUP_VERSION,exportedAt:new Date().toISOString(),pages:S.pages,events:S.events,settings:S.settings};
@@ -604,47 +598,87 @@ function exportBackup(){
   setTimeout(()=>URL.revokeObjectURL(url),1000);
   toast(`내보냈어요: ${name}`);
 }
-function openBackup(){
-  const countOf=s=>`페이지 ${s.pages.length}개 (루틴 ${s.pages.reduce((n,p)=>n+p.items.length,0)}개) · 약속 ${s.events.length}개`;
-  let pending=null; // 검증을 통과한 가져오기 데이터
+function openSettings(tab){
+  const TABS=[['general','일반'],['event','약속'],['backup','백업']];
+  let cur=TABS.some(([k])=>k===tab)?tab:'general';
   const ov=h('div',{class:'ov',onclick:(e)=>{if(e.target===ov)close()}});
-  const preview=h('div');
-  const setReady=on=>{btnOver.disabled=!on;btnMerge.disabled=!on};
-  const btnOver=h('button',{class:'danger',disabled:'',onclick:()=>{
-    if(!pending)return;
-    if(!confirm(`현재 데이터(${countOf(S)})를 모두 지우고 파일 내용으로 바꿀까요?`))return;
-    S={pages:pending.pages,events:pending.events,settings:pending.settings};save();applyTheme();
-    close();view.type='month';view.pageId=null;render();toast(`덮어썼어요: ${countOf(S)}`);
-  }},['덮어쓰기']);
-  const btnMerge=h('button',{class:'primary',disabled:'',onclick:()=>{
-    if(!pending)return;
-    const r=mergeBackup(pending);save();close();render();
-    toast(`합쳤어요: 페이지 ${r.addP}개, 루틴 ${r.addI}개, 약속 ${r.addE}개 추가 · 중복 ${r.dup}개 건너뜀`);
-  }},['합치기']);
-  const file=h('input',{type:'file',accept:'.json,application/json',onchange:async(e)=>{
-    pending=null;preview.innerHTML='';setReady(false);
-    const f=e.target.files&&e.target.files[0];if(!f)return;
-    let obj;
-    try{obj=JSON.parse(await f.text())}catch(err){e.target.value='';toast('가져오기 실패: JSON 파일이 아니거나 형식이 깨졌어요');return}
-    const r=validateBackup(obj);
-    if(r.error){e.target.value='';toast('가져오기 실패: '+r.error);return}
-    pending=r.data;
-    preview.appendChild(h('div',{class:'pvbox'},[
-      h('div',null,[countOf(pending)]),
-      h('div',{class:'hint',style:'margin:2px 0 0'},[`${f.name}${pending.exportedAt?' · 내보낸 시각 '+pending.exportedAt.replace('T',' ').slice(0,16):''}`]),
-      h('div',{class:'hint',style:'margin:2px 0 0'},['덮어쓰기: 현재 데이터를 지우고 파일로 교체 · 합치기: id 가 겹치지 않는 페이지·루틴·약속만 추가'])
+  const tabs=h('div',{class:'stabs',role:'tablist'});
+  const pane=h('div',{class:'spane'});
+  function drawTabs(){tabs.innerHTML='';TABS.forEach(([k,label])=>tabs.appendChild(h('button',{class:k===cur?'sel':'',role:'tab','aria-selected':k===cur?'true':'false',onclick:()=>{cur=k;drawTabs();drawPane()}},[label])))}
+  function drawPane(){pane.innerHTML='';({general:generalTab,event:eventTab,backup:backupTab})[cur](pane)}
+  // 값이 바뀌면 바로 저장·적용한다. 모달은 body 에 붙어 있어 render() 에 지워지지 않으므로 패널만 다시 그린다
+  const apply=fn=>{fn();save();render();drawPane()};
+  const seg=(name,options,value,onPick)=>{const el=h('div',{class:'seg',role:'group','aria-label':name});options.forEach(([k,label])=>el.appendChild(h('button',{class:value===k?'sel':'','aria-pressed':value===k?'true':'false',onclick:()=>onPick(k)},[label])));return el};
+  function generalTab(el){
+    el.appendChild(h('div',{class:'sect'},['테마']));
+    el.appendChild(h('div',{class:'frow'},[seg('테마',[['system','시스템'],['light','라이트'],['dark','다크']],cfg('theme'),k=>apply(()=>{S.settings.theme=k;applyTheme()}))]));
+    el.appendChild(h('div',{class:'sect'},['주 시작 요일']));
+    el.appendChild(h('div',{class:'frow'},[seg('주 시작 요일',[['mon','월요일'],['sun','일요일']],cfg('weekStart'),k=>apply(()=>{S.settings.weekStart=k;if(view.weekStart)view.weekStart=weekStartOf(view.weekStart)}))]));
+    el.appendChild(h('p',{class:'hint'},['월간·주간·편집 그리드가 이 요일부터 시작해요.']));
+    el.appendChild(h('div',{class:'sect'},['주간 뷰 시간 범위']));
+    const a=h('input',{type:'number',min:'0',max:'23',step:'1',value:cfg('dayStart')}),b=h('input',{type:'number',min:'1',max:'24',step:'1',value:cfg('dayEnd')});
+    const commit=()=>{
+      let st=Math.round(Number(a.value)),en=Math.round(Number(b.value));
+      if(!Number.isFinite(st)||!Number.isFinite(en)){drawPane();return}
+      st=Math.min(23,Math.max(0,st));en=Math.min(24,Math.max(1,en));
+      if(st>=en){toast('시작 시가 끝 시보다 앞서야 해요');drawPane();return}
+      apply(()=>{S.settings.dayStart=st;S.settings.dayEnd=en});
+    };
+    a.addEventListener('change',commit);b.addEventListener('change',commit);
+    el.appendChild(h('div',{class:'frow'},[h('label',null,['시작 ',a,' 시']),h('span',{class:'hint',style:'margin:0'},['~']),h('label',null,['끝 ',b,' 시'])]));
+    el.appendChild(h('p',{class:'hint'},['주간 뷰와 편집 그리드에 적용돼요. 범위 밖 루틴은 잘려 보이지만 데이터는 그대로예요.']));
+  }
+  function eventTab(el){
+    el.appendChild(h('div',{class:'sect'},['새 약속 기본값']));
+    el.appendChild(h('div',{class:'f'},[
+      h('label',null,['기본 시작 시간',h('input',{type:'time',value:cfg('defaultStart'),onchange:(e)=>{if(e.target.value)apply(()=>{S.settings.defaultStart=e.target.value});else drawPane()}})]),
+      h('label',null,['기본 길이(분)',h('input',{type:'number',min:'5',step:'5',value:cfg('defaultDur'),onchange:(e)=>apply(()=>{S.settings.defaultDur=Math.max(5,Number(e.target.value)||60)})})]),
     ]));
-    setReady(true);
-  }});
-  const md=h('div',{class:'md'},[
-    h('h3',null,['백업']),
-    h('div',{class:'sect'},['내보내기']),
-    h('p',{class:'hint',style:'margin:0 0 8px'},[`현재 ${countOf(S)} · 설정을 JSON 파일로 내려받아요.`]),
-    h('button',{onclick:exportBackup},['JSON 내려받기']),
-    h('div',{class:'sect'},['가져오기']),
-    file,preview,
-    h('div',{class:'acts'},[btnOver,btnMerge,h('span',{class:'sp'}),h('button',{onclick:close},['닫기'])])
+    el.appendChild(h('p',{class:'hint'},['새 약속을 열 때 이 값으로 채워집니다. 날짜는 클릭한 날이 기본이에요.']));
+  }
+  function backupTab(el){
+    const countOf=s=>`페이지 ${s.pages.length}개 (루틴 ${s.pages.reduce((n,p)=>n+p.items.length,0)}개) · 약속 ${s.events.length}개`;
+    let pending=null; // 검증을 통과한 가져오기 데이터
+    const preview=h('div');
+    const setReady=on=>{btnOver.disabled=!on;btnMerge.disabled=!on};
+    const btnOver=h('button',{class:'danger',disabled:'',onclick:()=>{
+      if(!pending)return;
+      if(!confirm(`현재 데이터(${countOf(S)})를 모두 지우고 파일 내용으로 바꿀까요?`))return;
+      S={pages:pending.pages,events:pending.events,settings:pending.settings};save();applyTheme();
+      close();view.type='month';view.pageId=null;view.weekStart=weekStartOf(new Date());render();toast(`덮어썼어요: ${countOf(S)}`);
+    }},['덮어쓰기']);
+    const btnMerge=h('button',{class:'primary',disabled:'',onclick:()=>{
+      if(!pending)return;
+      const r=mergeBackup(pending);save();close();render();
+      toast(`합쳤어요: 페이지 ${r.addP}개, 루틴 ${r.addI}개, 약속 ${r.addE}개 추가 · 중복 ${r.dup}개 건너뜀`);
+    }},['합치기']);
+    const file=h('input',{type:'file',accept:'.json,application/json',onchange:async(e)=>{
+      pending=null;preview.innerHTML='';setReady(false);
+      const f=e.target.files&&e.target.files[0];if(!f)return;
+      let obj;
+      try{obj=JSON.parse(await f.text())}catch(err){e.target.value='';toast('가져오기 실패: JSON 파일이 아니거나 형식이 깨졌어요');return}
+      const r=validateBackup(obj);
+      if(r.error){e.target.value='';toast('가져오기 실패: '+r.error);return}
+      pending=r.data;
+      preview.appendChild(h('div',{class:'pvbox'},[
+        h('div',null,[countOf(pending)]),
+        h('div',{class:'hint',style:'margin:2px 0 0'},[`${f.name}${pending.exportedAt?' · 내보낸 시각 '+pending.exportedAt.replace('T',' ').slice(0,16):''}`]),
+        h('div',{class:'hint',style:'margin:2px 0 0'},['덮어쓰기: 현재 데이터를 지우고 파일로 교체 · 합치기: id 가 겹치지 않는 페이지·루틴·약속만 추가'])
+      ]));
+      setReady(true);
+    }});
+    el.appendChild(h('div',{class:'sect'},['내보내기']));
+    el.appendChild(h('p',{class:'hint',style:'margin:0 0 8px'},[`현재 ${countOf(S)} · 설정을 JSON 파일로 내려받아요.`]));
+    el.appendChild(h('button',{onclick:exportBackup},['JSON 내려받기']));
+    el.appendChild(h('div',{class:'sect'},['가져오기']));
+    el.appendChild(file);el.appendChild(preview);
+    el.appendChild(h('div',{class:'acts',style:'justify-content:flex-start'},[btnOver,btnMerge]));
+  }
+  const md=h('div',{class:'md settings',role:'dialog','aria-label':'설정'},[
+    h('div',{class:'shead'},[h('h3',null,['설정']),h('button',{class:'quiet',title:'닫기',onclick:()=>close()},['닫기'])]),
+    h('div',{class:'sbody'},[tabs,pane])
   ]);
+  drawTabs();drawPane();
   ov.appendChild(md);document.body.appendChild(ov);
   const onKey=(e)=>{if(e.key==='Escape')close()};document.addEventListener('keydown',onKey);
   function close(){ov.remove();document.removeEventListener('keydown',onKey)}

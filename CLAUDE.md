@@ -73,7 +73,12 @@
 |---|---|---|
 | `defaultStart` | string | 새 약속의 기본 시작 시간 `"HH:MM"` (초기값 `"10:00"`) |
 | `defaultDur` | number | 새 약속의 기본 길이(분, 최소 5, 초기값 60) |
-| `theme` | string | `"system"` \| `"light"` \| `"dark"`. 없으면 system(OS 설정 따름). 사이드바 하단 세그먼트로 바꾸며 `applyTheme()` 이 `<html data-theme>` 에 반영 |
+| `theme` | string | `"system"` \| `"light"` \| `"dark"`. 없으면 system(OS 설정 따름). 설정 모달 일반 탭에서 바꾸며 `applyTheme()` 이 `<html data-theme>` 에 반영 |
+| `weekStart` | string | `"mon"` \| `"sun"`. 없으면 mon. 월간·주간·편집 그리드·표·요일 체크박스의 **표시 순서만** 바뀌고 데이터의 `day`(0=월)는 그대로 (`dayOrder()`, `dayPos()`, `weekStartOf()`) |
+| `dayStart` | number | 주간 뷰·편집 그리드가 보여줄 시작 시(0~23). 없으면 6 |
+| `dayEnd` | number | 끝 시(1~24, `dayStart` 보다 커야 함). 없으면 24. 범위 밖 루틴은 잘려 보이거나(일부) 그리드에서 안 보이지만(전부 밖) 데이터·표는 그대로 |
+
+저장값에 없는 설정 키는 `cfg(key)` 가 `SETTINGS_DEFAULTS` 로 채워 읽는다. 설정 모달(`openSettings(tab)`, 상단바 ⚙ 설정)은 좌측 탭 일반(테마·주 시작 요일·시간 범위) / 약속(기본 시작·길이) / 백업 으로 나뉘고, 값은 바꾸는 즉시 `save()`+`render()` 된다(저장 버튼 없음).
 
 `load()` 는 저장값에 `pages` 와 `events` 가 있으면 그대로 쓰고, 아니면 빈 상태로 시작한다. 마이그레이션 로직은 없다.
 
@@ -100,7 +105,7 @@
 
 ## 백업 (JSON 내보내기/가져오기)
 
-- 상단바(월간·주간) "백업" → 모달. 내보내기는 `routine-calendar-YYYY-MM-DD.json` 다운로드, 가져오기는 파일 선택 → 미리보기(페이지·루틴·약속 수) → 덮어쓰기 / 합치기
+- 설정 모달(상단바 ⚙ 설정, 모든 뷰) 의 백업 탭. 내보내기는 `routine-calendar-YYYY-MM-DD.json` 다운로드, 가져오기는 파일 선택 → 미리보기(페이지·루틴·약속 수) → 덮어쓰기 / 합치기
 - 파일 형식: `{ version: 1, exportedAt: ISO 문자열, pages, events, settings }`. `version` 이 1이 아니면 거부
 - `validateBackup()` 은 모든 레코드를 엄격히 검사(id 문자열, day 0~6, HH:MM, YYYY-MM-DD, 같은 배열 안 id 중복 없음)하고 알려진 필드만 복사한 새 객체를 만든다. 실패하면 에러 토스트만 띄우고 기존 데이터는 그대로
 - 덮어쓰기: `confirm` 후 `S` 전체 교체(설정·테마 포함). 합치기(`mergeBackup`): id 기준 중복 제거 — 새 id 의 페이지·약속만 추가하고, 같은 id 페이지는 기존 것을 두고 그 안의 새 id 루틴만 추가. 설정은 유지
@@ -109,11 +114,11 @@
 
 세 섹션으로 나뉜 IIFE 하나. 더 쪼개지 말 것.
 
-1. **상태 · 충돌 로직**: 상수(`KEY`, `DAYS`, `PCOL`), 유틸(`toMin`, `fromMin`, `ymd`, `wd`, `overlap`…), `load`/`save`, `applyTheme`, 백업 검증·합치기(`validateBackup`, `mergeBackup`), `view` 상태, `activeItems`/`eventConflicts`/`pageConflicts`
+1. **상태 · 충돌 로직**: 상수(`KEY`, `DAYS`, `PCOL`), 유틸(`toMin`, `fromMin`, `ymd`, `wd`, `overlap`…), `load`/`save`, `applyTheme`, 설정 기본값(`SETTINGS_DEFAULTS`, `cfg`, `dayOrder`, `weekStartOf`), 백업 검증·합치기(`validateBackup`, `mergeBackup`), `view` 상태, `activeItems`/`eventConflicts`/`pageConflicts`
 2. **렌더링**: `render()` 가 `#app` 을 통째로 다시 그린다. `h()` 로 DOM 생성. 사이드바, 월간, 주간, 페이지 편집기, 드래그 그리드, 라벨 편집기
    - 주간 뷰 겹침 배치(`layoutOverlaps`): 같은 요일에서 겹치는 루틴 블록은 이어져 겹치는 묶음별로 열을 배정해 폭을 n등분(구글 캘린더 방식). 3열 이상이면 라벨을 빼고 title 툴팁만. 겹치지 않는 블록은 기본 폭. 약속 블록은 대상 아님
    - 편집 그리드 블록 조작(`renderEditGrid`): 본체 드래그=이동(요일 간 이동 가능), 상단/하단 6px 핸들(`.rs`)=시작/끝 조절. 30분 스냅, 최소 30분, 06:00~24:00 안으로 클램프. 5px 미만 움직임은 클릭(이름 편집기). 드래그 중엔 시간 텍스트만 바꾸고 놓을 때 `save()`+`render()`. 블록을 누르면 열려 있던 이름 편집기는 `settleLabelEditor()` 로 렌더 없이 확정한다 (드래그 도중 재렌더 방지)
-3. **이벤트 모달 · 설정 · 토스트**: `openEvent`, `openSettings`, `openBackup`/`exportBackup`, `toast`
+3. **이벤트 모달 · 설정 · 토스트**: `openEvent`, `openSettings`(탭: 일반/약속/백업, `exportBackup` 포함), `toast`
 
 상태가 바뀌면 `save()` 후 `render()` 를 호출하는 단순한 방식. 부분 갱신·가상 DOM 없음.
 
