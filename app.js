@@ -16,6 +16,9 @@ const parse=s=>{const [y,m,d]=s.split('-').map(Number);return new Date(y,m-1,d)}
 const wd=d=>(d.getDay()+6)%7; // 0=Mon
 const overlap=(a1,a2,b1,b2)=>a1<b2&&b1<a2;
 const esc=s=>String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+// 라벨 정규화(trim + 연속 공백 1개) 와 결정적 해시 (FNV-1a). 라벨별 색과 형제 블록 판정에 씀
+const labelKey=s=>(s||'').trim().replace(/\s+/g,' ');
+const hashStr=s=>{let h=2166136261;for(let i=0;i<s.length;i++){h^=s.charCodeAt(i);h=Math.imul(h,16777619)}return h>>>0};
 
 let S=load();
 function load(){
@@ -59,7 +62,7 @@ function validateBackup(obj){
         if((start!==''&&!isTime(start))||(end!==''&&!isTime(end)))throw new Error(`pages[${i}].items[${j}]: 시간 형식은 HH:MM 이에요`);
         return {id:it.id,day:it.day,start,end,label:typeof it.label==='string'?it.label:''};
       });
-      return {id:p.id,name:typeof p.name==='string'?p.name:'',color:Number.isInteger(p.color)?((p.color%PCOL.length)+PCOL.length)%PCOL.length:0,active:p.active===true,items};
+      return {id:p.id,name:typeof p.name==='string'?p.name:'',color:Number.isInteger(p.color)?((p.color%PCOL.length)+PCOL.length)%PCOL.length:0,active:p.active===true,colorByLabel:p.colorByLabel===true,items};
     });
     const eids=new Set();
     const events=obj.events.map((ev,i)=>{
@@ -126,6 +129,7 @@ function pageConflicts(page){
    ========================================================= */
 const app=document.getElementById('app');
 function render(){
+  refreshPalette();
   app.innerHTML='';
   app.appendChild(renderSide());
   app.appendChild(renderMain());
@@ -135,6 +139,25 @@ function h(tag,attrs,children){
   if(attrs)for(const k in attrs){ if(k==='class')el.className=attrs[k]; else if(k==='style')el.style.cssText=attrs[k]; else if(k.startsWith('on'))el.addEventListener(k.slice(2),attrs[k]); else if(k==='html')el.innerHTML=attrs[k]; else el.setAttribute(k,attrs[k]); }
   (children||[]).forEach(c=>{ if(c==null)return; el.appendChild(typeof c==='string'?document.createTextNode(c):c) });
   return el;
+}
+
+/* label colors: colorByLabel 페이지의 블록 색 */
+const hexToHsl=hex=>{const m=/^#?([0-9a-f]{6})$/i.exec(hex||'');if(!m)return null;const n=parseInt(m[1],16);const r=(n>>16&255)/255,g=(n>>8&255)/255,b=(n&255)/255;
+  const max=Math.max(r,g,b),min=Math.min(r,g,b),l=(max+min)/2;let h=0,s=0;
+  if(max!==min){const d=max-min;s=l>.5?d/(2-max-min):d/(max+min);if(max===r)h=(g-b)/d+(g<b?6:0);else if(max===g)h=(b-r)/d+2;else h=(r-g)/d+4;h*=60}
+  return [h,s,l]};
+// [채도 Δ, 명도 Δ] 6단계 순환 (색상 h 는 유지). 명도는 기본색에서 8%씩 벌린 사다리(-16,-8,+8,+16,+24,+32)로 단계가 눈에 띄게 다르고,
+// 기본색이 밝은 팔레트(다크 테마, l>.5)에서는 방향을 뒤집어 어두워지는 쪽으로 간다 (클램프로 단계가 뭉치지 않게)
+const LABEL_VARIANTS=[[.08,-.16],[-.08,-.08],[.08,.08],[-.08,.16],[.10,.24],[-.12,.32]];
+let PBASE=[]; // 현재 테마의 --p0..--p5 실제 색(HSL). render() 마다 갱신하므로 테마가 바뀌면 변형색도 따라감
+function refreshPalette(){const cs=getComputedStyle(document.documentElement);PBASE=PCOL.map((_,i)=>hexToHsl(cs.getPropertyValue('--p'+i).trim()))}
+// 블록 인라인 스타일(배경, 필요하면 글자색). colorByLabel 이 켜진 페이지는 라벨 해시로 고른 변형색, 이름 없으면 페이지 기본색
+function blockStyle(p,label,withInk){
+  const ci=p.color%PCOL.length,base=PCOL[ci],k=labelKey(label);
+  if(!p.colorByLabel||!k||!PBASE[ci])return 'background:'+base;
+  const [hh,s,l]=PBASE[ci];const [ds,dl]=LABEL_VARIANTS[hashStr(k)%LABEL_VARIANTS.length];const dir=l>.5?-1:1;
+  const s2=Math.min(1,Math.max(.12,s+ds)),l2=Math.min(.82,Math.max(.18,l+dir*dl));
+  return `background:hsl(${hh.toFixed(1)} ${(s2*100).toFixed(1)}% ${(l2*100).toFixed(1)}%)`+(withInk!==false&&l2>.62?';color:#14181d':'');
 }
 
 function renderSide(){
@@ -179,7 +202,7 @@ function togglePage(p){
   render();
 }
 function addPage(){
-  const p={id:uid(),name:'새 페이지',color:S.pages.length%PCOL.length,active:false,items:[]};
+  const p={id:uid(),name:'새 페이지',color:S.pages.length%PCOL.length,active:false,colorByLabel:false,items:[]};
   S.pages.push(p);save();view.type='page';view.pageId=p.id;render();
 }
 
@@ -278,7 +301,7 @@ function renderWeek(main){
       const {col:c,n}=lay[k];
       // 겹치는 묶음은 폭을 n등분해 나란히. 겹치지 않으면(n=1) 기본 left/right 그대로. 3개 이상 겹치면 라벨 생략, title 툴팁만
       const split=n>1?`;right:auto;left:calc(3px + (100% - 6px) * ${c} / ${n});width:calc((100% - 6px) / ${n} - ${c<n-1?2:0}px)`:'';
-      col.appendChild(h('div',{class:'blk',style:`top:${(s-H0*60)/60*PX}px;height:${(e-s)/60*PX-2}px;background:${PCOL[p.color%PCOL.length]}${split}`,title:`${p.name} · ${it.start}–${it.end} ${it.label||''}`},[n>=3?null:h('div',{class:'l'},[it.label||p.name])]));
+      col.appendChild(h('div',{class:'blk',style:`top:${(s-H0*60)/60*PX}px;height:${(e-s)/60*PX-2}px;${blockStyle(p,it.label)}${split}`,title:`${p.name} · ${it.start}–${it.end} ${it.label||''}`},[n>=3?null:h('div',{class:'l'},[it.label||p.name])]));
     });
     (evIdx[ymd(d)]||[]).forEach(ev=>{
       const s=Math.max(toMin(ev.startTime),H0*60),e=Math.min(toMin(ev.endTime),H1*60);if(e<=s)return;
@@ -327,7 +350,12 @@ function renderPage(main){
     h('input',{type:'text',value:p.name,placeholder:'페이지 이름 (예: 학교 시간표, 운동)',oninput:(e)=>{p.name=e.target.value;save();document.querySelectorAll('.side .nav li .nm').forEach(()=>{});},onchange:()=>render()}),
     sw
   ]));
-  ed.appendChild(h('p',{class:'sub',style:'margin-top:12px'},['빈 칸을 드래그하면 루틴이 생겨요 (30분 단위). 블록을 끌면 이동, 위·아래 가장자리를 끌면 시간 조절. 클릭하면 이름 수정·삭제. 흐린 블록은 다른 활성 페이지의 루틴.']));
+  // 같은 이름끼리 같은 색 (page.colorByLabel)
+  ed.appendChild(h('div',{class:'row',style:'margin-top:6px'},[
+    h('button',{class:'tg'+(p.colorByLabel?' on':''),role:'switch','aria-checked':p.colorByLabel?'true':'false',onclick:()=>{p.colorByLabel=!p.colorByLabel;save();render()}},[h('span',{class:'sw'}),'같은 이름끼리 같은 색']),
+    h('span',{class:'hint',style:'margin:0'},['켜면 라벨마다 페이지 색의 밝기·채도를 바꿔 배정해요. 이름 없는 블록은 기본색.'])
+  ]));
+  ed.appendChild(h('p',{class:'sub',style:'margin-top:8px'},['빈 칸을 드래그하면 루틴이 생겨요 (30분 단위). 블록을 끌면 이동, 위·아래 가장자리를 끌면 시간 조절. 클릭하면 이름 수정·삭제·요일 복제. 흐린 블록은 다른 활성 페이지의 루틴.']));
   ed.appendChild(renderEditGrid(p));
   ed.appendChild(h('p',{class:'sub'},['목록에서 시간을 정확히 고칠 수 있어요.']));
   const tbl=h('table');
@@ -378,13 +406,13 @@ function renderEditGrid(p){
     for(let hr=H0;hr<=H1;hr++){c.appendChild(h('div',{class:'hrline',style:'top:'+((hr-H0)*PX)+'px'}));if(hr<H1)c.appendChild(h('div',{class:'hrline half',style:'top:'+((hr-H0)*PX+PX/2)+'px'}))}
     others.filter(it=>it.day===day).forEach(it=>{
       const s=Math.max(toMin(it.start),H0*60),e=Math.min(toMin(it.end),H1*60);if(e<=s)return;
-      c.appendChild(h('div',{class:'blk other',style:`top:${(s-H0*60)/60*PX}px;height:${(e-s)/60*PX-2}px;background:${PCOL[it.page.color%PCOL.length]}`},[h('div',{class:'l'},[it.page.name])]));
+      c.appendChild(h('div',{class:'blk other',style:`top:${(s-H0*60)/60*PX}px;height:${(e-s)/60*PX-2}px;${blockStyle(it.page,it.label,false)}`},[h('div',{class:'l'},[it.page.name])]));
     });
     p.items.filter(it=>it.day===day&&it.start&&it.end).forEach(it=>{
       const s=Math.max(toMin(it.start),H0*60),e=Math.min(toMin(it.end),H1*60);if(e<=s)return;
       const lbl=h('div',{class:'l'},[it.label||'(이름 없음)']);
       const isOvl=ovl.has(it.id);
-      const blk=h('div',{class:'blk'+(isOvl?' ovl':''),'data-id':it.id,style:`top:${(s-H0*60)/60*PX}px;height:${(e-s)/60*PX-2}px;background:${col}`,title:(isOvl?'같은 페이지 루틴과 겹침 · ':'')+`${it.start}–${it.end} ${it.label||''}`},[lbl,h('div',{class:'rs t'}),h('div',{class:'rs b'})]);
+      const blk=h('div',{class:'blk'+(isOvl?' ovl':''),'data-id':it.id,style:`top:${(s-H0*60)/60*PX}px;height:${(e-s)/60*PX-2}px;${blockStyle(p,it.label)}`,title:(isOvl?'같은 페이지 루틴과 겹침 · ':'')+`${it.start}–${it.end} ${it.label||''}`},[lbl,h('div',{class:'rs t'}),h('div',{class:'rs b'})]);
       // 블록 조작: 본체 드래그=이동(다른 요일로도), 상단/하단 6px(.rs)=시작/끝 시간 조절. 30분 스냅, 최소 30분.
       // 5px 미만 움직임으로 놓으면 클릭 → 이름 편집기. 드래그 중엔 시간 텍스트를 실시간 표시하고 놓을 때 저장.
       let d=null;
@@ -447,7 +475,7 @@ function renderEditGrid(p){
     grid.appendChild(c);
   }
   wrap.appendChild(grid);
-  if(pendingEdit){const pe=pendingEdit;pendingEdit=null;const it=p.items.find(x=>x.id===pe.itemId);if(it)setTimeout(()=>openLabelEditor(p,it,pe.isNew,grid),0)}
+  if(pendingEdit){const pe=pendingEdit;pendingEdit=null;const it=p.items.find(x=>x.id===pe.itemId);if(it)setTimeout(()=>openLabelEditor(p,it,pe.isNew,grid,pe),0)}
   return wrap;
 }
 let lblEd=null;
@@ -455,29 +483,49 @@ function closeLabelEditor(){if(lblEd){lblEd.el.remove();lblEd.blk&&lblEd.blk.cla
 function settleLabelEditor(keep){ // 열린 이름 편집기를 렌더 없이 확정. 새 항목이 빈 이름이면 삭제(단 keep 항목은 유지). 블록 드래그 직전에 씀
   if(!lblEd)return;
   const {p,it,isNew,inp,blk}=lblEd;const v=inp.value.trim();
-  if(isNew&&!v&&it!==keep){p.items=p.items.filter(x=>x!==it);blk&&blk.remove()}else it.label=v;
+  if(isNew&&!v&&it!==keep){p.items=p.items.filter(x=>x!==it);blk&&blk.remove()}else commitLabel(p,it,v);
   save();closeLabelEditor();
 }
-function openLabelEditor(p,it,isNew,grid){
+const LBLW=236; // 라벨 편집기 폭 (styles.css .lbled width 와 같게)
+// 형제 블록: 같은 페이지에서 이름(정규화)·시작·끝이 같은 블록들 (자기 자신 포함). 요일 체크박스와 이름 일괄 변경의 기준
+function siblingsOf(p,it){const k=labelKey(it.label);return p.items.filter(x=>x.start===it.start&&x.end===it.end&&labelKey(x.label)===k)}
+function commitLabel(p,it,v){for(const x of siblingsOf(p,it))x.label=v;it.label=v}
+function openLabelEditor(p,it,isNew,grid,opts){
   closeLabelEditor();
   const blk=grid.querySelector(`.blk[data-id="${it.id}"]`);if(!blk)return;
   const colEl=blk.parentElement;
   blk.classList.add('editing');
   const inp=h('input',{type:'text',value:it.label||'',placeholder:'이름 (Enter 확정, Esc 취소)'});
-  const done=()=>{it.label=inp.value.trim();save();closeLabelEditor();render()};
+  const done=()=>{commitLabel(p,it,inp.value.trim());save();closeLabelEditor();render()};
   const cancel=()=>{if(isNew&&!inp.value.trim()){p.items=p.items.filter(x=>x!==it);save()}closeLabelEditor();render()};
   const del=()=>{p.items=p.items.filter(x=>x!==it);save();closeLabelEditor();render()};
   inp.addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();done()}else if(e.key==='Escape'){e.preventDefault();cancel()}});
   inp.addEventListener('blur',()=>{setTimeout(()=>{if(lblEd&&lblEd.inp===inp&&!lblEd.el.contains(document.activeElement)){isNew&&!inp.value.trim()?cancel():done()}},80)});
-  const el=h('div',{class:'lbled',onpointerdown:e=>e.stopPropagation(),onclick:e=>e.stopPropagation()},[inp,h('button',{class:'quiet',title:'삭제',onmousedown:e=>e.preventDefault(),onclick:del},['✕'])]);
-  // position: below block, keep inside grid horizontally
+  // 요일 체크박스: 체크 = 그 요일에 같은 이름·시작·끝의 형제가 있음. 현재 블록의 요일은 해제 불가.
+  // 체크/해제하면 입력 중인 이름을 먼저 형제 전체에 확정하고, 형제를 만들거나 지운 뒤 다시 그리고 편집기를 같은 블록에 다시 연다
+  const days=h('div',{class:'days'});
+  const sib=siblingsOf(p,it);
+  DAYS.forEach((d,i)=>{
+    const has=i===it.day||sib.some(x=>x.day===i);
+    const cb=h('input',{type:'checkbox',...(has?{checked:''}:{}),...(i===it.day?{disabled:''}:{}),onchange:(e)=>{
+      const v=inp.value.trim();commitLabel(p,it,v);
+      if(e.target.checked){if(!siblingsOf(p,it).some(x=>x.day===i))p.items.push({id:uid(),day:i,start:it.start,end:it.end,label:v})}
+      else{const rm=new Set(siblingsOf(p,it).filter(x=>x.day===i&&x!==it).map(x=>x.id));p.items=p.items.filter(x=>!rm.has(x.id))}
+      save();pendingEdit={itemId:it.id,isNew:false,caretEnd:true};closeLabelEditor();render();
+    }});
+    days.appendChild(h('label',{title:d+'요일에 같은 이름·시간 블록'},[cb,d]));
+  });
+  const el=h('div',{class:'lbled',onpointerdown:e=>e.stopPropagation(),onclick:e=>e.stopPropagation()},[inp,h('button',{class:'quiet',title:'삭제',onmousedown:e=>e.preventDefault(),onclick:del},['✕']),days]);
+  // position: below block, keep inside grid horizontally; if it would run past the bottom, put it above the block
   const top=colEl.offsetTop+blk.offsetTop+blk.offsetHeight+4;
-  const colRight=colEl.offsetLeft+colEl.offsetWidth;const gridW=grid.scrollWidth;
-  let left=colEl.offsetLeft;if(left+190>gridW)left=Math.max(0,gridW-194);
+  const gridW=grid.scrollWidth;
+  let left=colEl.offsetLeft;if(left+LBLW>gridW)left=Math.max(0,gridW-LBLW-4);
   el.style.top=top+'px';el.style.left=left+'px';
   grid.appendChild(el);
+  if(top+el.offsetHeight>grid.clientHeight)el.style.top=Math.max(0,colEl.offsetTop+blk.offsetTop-el.offsetHeight-4)+'px';
   lblEd={el,inp,blk,p,it,isNew};
-  inp.focus();inp.select();
+  inp.focus();
+  if(opts&&opts.caretEnd){const n=inp.value.length;inp.setSelectionRange(n,n)}else inp.select();
 }
 
 /* =========================================================
@@ -613,4 +661,6 @@ function toast(msg,lines){
 }
 
 render();
+// OS 테마가 바뀌면 다시 그려서 라벨 변형색 등이 새 팔레트를 따르게
+matchMedia('(prefers-color-scheme: dark)').addEventListener('change',()=>{if(!S.settings.theme||S.settings.theme==='system')render()});
 })();
