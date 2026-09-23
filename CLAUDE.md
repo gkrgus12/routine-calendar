@@ -8,7 +8,8 @@
 - 파일 3개: `index.html`(마크업), `styles.css`(스타일), `app.js`(전체 로직, IIFE 하나)
 - 저장소는 `localStorage` 한 키뿐. 서버·백엔드 없음
 - `manifest.json` + `icon.svg` 로 PWA(standalone) 설치 가능. 서비스 워커는 없음
-- 폰트는 Google Fonts(IBM Plex Sans KR)를 CDN으로 로드. 오프라인이면 시스템 폰트로 폴백
+- 폰트는 시스템 폰트 스택(-apple-system / Segoe UI / Apple SD Gothic Neo / Malgun Gothic …). 외부 CDN 없음
+- UI는 iOS 느낌: `styles.css` 상단의 토큰으로 관리. 사이드바·상단바·모달·토스트·라벨 팝오버는 반투명 유리(`--glass`, backdrop-filter), 배경은 그라데이션. 캘린더 격자·표·루틴/약속 블록은 불투명(`--panel`, `--grid-line`) — 페이지 색 구분이 기능이라 투명도를 주지 않는다. 라이트/다크는 `prefers-color-scheme` 과 `:root[data-theme]` 둘 다 지원
 
 ## 실행
 
