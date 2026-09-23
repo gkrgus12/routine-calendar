@@ -200,6 +200,11 @@ button.quiet.danger:hover{background:rgba(229,52,58,.12)}
 .md .acts{display:flex;gap:8px;justify-content:flex-end;margin-top:14px}
 .md .acts .sp{flex:1}
 .cfbox{background:var(--warn-bg);border:1px solid var(--warn);border-radius:10px;padding:8px 10px;font-size:12px;margin-top:6px}
+.md .sect{font-size:12px;font-weight:600;color:var(--muted);margin:14px 0 6px}
+.md input[type=file]{width:100%;padding:6px 8px;font-size:12px}
+.md .pvbox{background:var(--accent-tint);border-radius:10px;padding:8px 10px;font-size:13px;margin-top:8px}
+button[disabled]{opacity:.45;cursor:default}
+button[disabled]:active{transform:none}
 .cfbox ul{margin:4px 0 0;padding-left:18px}
 .toast{position:fixed;left:50%;bottom:calc(20px + env(safe-area-inset-bottom,0px));transform:translateX(-50%);
   background:var(--toast-bg);color:#fff;-webkit-backdrop-filter:var(--blur);backdrop-filter:var(--blur);

@@ -31,6 +31,66 @@ const today=ymd(new Date());
 let view={type:'month',ym:today.slice(0,7),pageId:null,weekStart:mondayOf(new Date())};
 function mondayOf(d){const x=new Date(d);x.setDate(x.getDate()-wd(x));x.setHours(0,0,0,0);return x}
 
+/* ---------- backup (JSON 내보내기/가져오기) ---------- */
+// 파일 형식: {version:1, exportedAt, pages, events, settings}. 가져올 때 version 과 각 레코드를 엄격히 검사하고,
+// 알려진 필드만 복사한 새 객체를 돌려준다 (잘못된 파일은 기존 데이터를 건드리지 않음).
+const BACKUP_VERSION=1;
+const isId=s=>typeof s==='string'&&s.length>0&&s.length<=64;
+const isTime=s=>{if(typeof s!=='string'||!/^\d{2}:\d{2}$/.test(s))return false;const [hh,mm]=s.split(':').map(Number);return mm<60&&hh*60+mm<=1440};
+const isDate=s=>typeof s==='string'&&/^\d{4}-\d{2}-\d{2}$/.test(s)&&ymd(parse(s))===s;
+function validateBackup(obj){
+  const fail=m=>({error:m});
+  if(!obj||typeof obj!=='object'||Array.isArray(obj))return fail('최상위가 객체가 아니에요');
+  if(obj.version!==BACKUP_VERSION)return fail(`지원하지 않는 버전이에요 (version: ${obj.version===undefined?'없음':JSON.stringify(obj.version)}, 필요: ${BACKUP_VERSION})`);
+  if(!Array.isArray(obj.pages)||!Array.isArray(obj.events)||!obj.settings||typeof obj.settings!=='object')return fail('pages·events·settings 가 모두 있어야 해요');
+  const uniq=(set,id,what)=>{if(set.has(id))throw new Error(`${what} id 중복: ${id}`);set.add(id)};
+  try{
+    const pids=new Set();
+    const pages=obj.pages.map((p,i)=>{
+      if(!p||typeof p!=='object'||!isId(p.id))throw new Error(`pages[${i}]: id 가 없어요`);
+      uniq(pids,p.id,'페이지');
+      if(!Array.isArray(p.items))throw new Error(`pages[${i}]: items 가 배열이 아니에요`);
+      const iids=new Set();
+      const items=p.items.map((it,j)=>{
+        if(!it||typeof it!=='object'||!isId(it.id))throw new Error(`pages[${i}].items[${j}]: id 가 없어요`);
+        uniq(iids,it.id,'루틴');
+        if(!Number.isInteger(it.day)||it.day<0||it.day>6)throw new Error(`pages[${i}].items[${j}]: day 는 0~6 이어야 해요`);
+        const start=it.start==null?'':it.start,end=it.end==null?'':it.end;
+        if((start!==''&&!isTime(start))||(end!==''&&!isTime(end)))throw new Error(`pages[${i}].items[${j}]: 시간 형식은 HH:MM 이에요`);
+        return {id:it.id,day:it.day,start,end,label:typeof it.label==='string'?it.label:''};
+      });
+      return {id:p.id,name:typeof p.name==='string'?p.name:'',color:Number.isInteger(p.color)?((p.color%PCOL.length)+PCOL.length)%PCOL.length:0,active:p.active===true,items};
+    });
+    const eids=new Set();
+    const events=obj.events.map((ev,i)=>{
+      if(!ev||typeof ev!=='object'||!isId(ev.id))throw new Error(`events[${i}]: id 가 없어요`);
+      uniq(eids,ev.id,'약속');
+      if(!isDate(ev.startDate)||!isDate(ev.endDate)||!isTime(ev.startTime)||!isTime(ev.endTime))throw new Error(`events[${i}]: 날짜(YYYY-MM-DD)·시간(HH:MM) 형식을 확인하세요`);
+      return {id:ev.id,title:typeof ev.title==='string'?ev.title:'',startDate:ev.startDate,endDate:ev.endDate,startTime:ev.startTime,endTime:ev.endTime};
+    });
+    const st=obj.settings;
+    if(!isTime(st.defaultStart)||!(Number.isFinite(st.defaultDur)&&st.defaultDur>=5))throw new Error('settings: defaultStart(HH:MM)·defaultDur(5 이상) 를 확인하세요');
+    const settings={defaultStart:st.defaultStart,defaultDur:st.defaultDur};
+    if(['system','light','dark'].includes(st.theme))settings.theme=st.theme;
+    return {data:{pages,events,settings,exportedAt:typeof obj.exportedAt==='string'?obj.exportedAt:null}};
+  }catch(e){return fail(e.message)}
+}
+// 합치기: id 기준 중복 제거. 같은 id 의 페이지는 기존 것을 두고 새 루틴만 추가, 약속도 새 id 만 추가. 설정은 유지
+function mergeBackup(data){
+  const byId=arr=>new Map(arr.map(x=>[x.id,x]));
+  let addP=0,addI=0,addE=0,dup=0;
+  const pmap=byId(S.pages);
+  for(const p of data.pages){
+    const cur=pmap.get(p.id);
+    if(!cur){S.pages.push(p);addP++;addI+=p.items.length;continue}
+    dup++;const imap=byId(cur.items);
+    for(const it of p.items){if(imap.has(it.id)){dup++;continue}cur.items.push(it);addI++}
+  }
+  const emap=byId(S.events);
+  for(const ev of data.events){if(emap.has(ev.id)){dup++;continue}S.events.push(ev);addE++}
+  return {addP,addI,addE,dup};
+}
+
 /* ---------- conflict logic ---------- */
 function activeItems(exceptPageId){
   const out=[];
@@ -140,6 +200,7 @@ function renderMonth(main){
     h('button',{class:'quiet',onclick:()=>{shiftMonth(1)}},['›']),
     h('button',{class:'quiet',onclick:()=>{view.ym=today.slice(0,7);render()}},['오늘']),
     h('span',{class:'sp'}),
+    h('button',{class:'quiet',onclick:openBackup},['백업']),
     h('button',{class:'quiet',onclick:openSettings},['약속 기본값']),
     h('button',{class:'primary',onclick:()=>openEvent(null,today)},['+ 약속'])
   ]);
@@ -184,6 +245,8 @@ function renderWeek(main){
     h('h2',null,[`${ws.getMonth()+1}월 ${ws.getDate()}일 – ${we.getMonth()+1}월 ${we.getDate()}일`]),
     h('button',{class:'quiet',onclick:()=>{view.weekStart.setDate(view.weekStart.getDate()+7);render()}},['›']),
     h('button',{class:'quiet',onclick:()=>{view.weekStart=mondayOf(new Date());render()}},['이번 주']),
+    h('span',{class:'sp'}),
+    h('button',{class:'quiet',onclick:openBackup},['백업']),
   ]);
   main.appendChild(bar);
   const body=h('div',{class:'body'});
@@ -481,6 +544,62 @@ function openSettings(){
     h('div',{class:'acts'},[h('span',{class:'sp'}),h('button',{onclick:()=>ov.remove()},['취소']),h('button',{class:'primary',onclick:()=>{S.settings=d;save();ov.remove();toast('기본값을 저장했어요')}},['저장'])])
   ]);
   ov.appendChild(md);document.body.appendChild(ov);
+}
+
+/* backup modal */
+function exportBackup(){
+  const name=`routine-calendar-${ymd(new Date())}.json`;
+  const data={version:BACKUP_VERSION,exportedAt:new Date().toISOString(),pages:S.pages,events:S.events,settings:S.settings};
+  const blob=new Blob([JSON.stringify(data,null,2)],{type:'application/json'});
+  const url=URL.createObjectURL(blob);
+  const a=h('a',{href:url,download:name});document.body.appendChild(a);a.click();a.remove();
+  setTimeout(()=>URL.revokeObjectURL(url),1000);
+  toast(`내보냈어요: ${name}`);
+}
+function openBackup(){
+  const countOf=s=>`페이지 ${s.pages.length}개 (루틴 ${s.pages.reduce((n,p)=>n+p.items.length,0)}개) · 약속 ${s.events.length}개`;
+  let pending=null; // 검증을 통과한 가져오기 데이터
+  const ov=h('div',{class:'ov',onclick:(e)=>{if(e.target===ov)close()}});
+  const preview=h('div');
+  const setReady=on=>{btnOver.disabled=!on;btnMerge.disabled=!on};
+  const btnOver=h('button',{class:'danger',disabled:'',onclick:()=>{
+    if(!pending)return;
+    if(!confirm(`현재 데이터(${countOf(S)})를 모두 지우고 파일 내용으로 바꿀까요?`))return;
+    S={pages:pending.pages,events:pending.events,settings:pending.settings};save();applyTheme();
+    close();view.type='month';view.pageId=null;render();toast(`덮어썼어요: ${countOf(S)}`);
+  }},['덮어쓰기']);
+  const btnMerge=h('button',{class:'primary',disabled:'',onclick:()=>{
+    if(!pending)return;
+    const r=mergeBackup(pending);save();close();render();
+    toast(`합쳤어요: 페이지 ${r.addP}개, 루틴 ${r.addI}개, 약속 ${r.addE}개 추가 · 중복 ${r.dup}개 건너뜀`);
+  }},['합치기']);
+  const file=h('input',{type:'file',accept:'.json,application/json',onchange:async(e)=>{
+    pending=null;preview.innerHTML='';setReady(false);
+    const f=e.target.files&&e.target.files[0];if(!f)return;
+    let obj;
+    try{obj=JSON.parse(await f.text())}catch(err){e.target.value='';toast('가져오기 실패: JSON 파일이 아니거나 형식이 깨졌어요');return}
+    const r=validateBackup(obj);
+    if(r.error){e.target.value='';toast('가져오기 실패: '+r.error);return}
+    pending=r.data;
+    preview.appendChild(h('div',{class:'pvbox'},[
+      h('div',null,[countOf(pending)]),
+      h('div',{class:'hint',style:'margin:2px 0 0'},[`${f.name}${pending.exportedAt?' · 내보낸 시각 '+pending.exportedAt.replace('T',' ').slice(0,16):''}`]),
+      h('div',{class:'hint',style:'margin:2px 0 0'},['덮어쓰기: 현재 데이터를 지우고 파일로 교체 · 합치기: id 가 겹치지 않는 페이지·루틴·약속만 추가'])
+    ]));
+    setReady(true);
+  }});
+  const md=h('div',{class:'md'},[
+    h('h3',null,['백업']),
+    h('div',{class:'sect'},['내보내기']),
+    h('p',{class:'hint',style:'margin:0 0 8px'},[`현재 ${countOf(S)} · 설정을 JSON 파일로 내려받아요.`]),
+    h('button',{onclick:exportBackup},['JSON 내려받기']),
+    h('div',{class:'sect'},['가져오기']),
+    file,preview,
+    h('div',{class:'acts'},[btnOver,btnMerge,h('span',{class:'sp'}),h('button',{onclick:close},['닫기'])])
+  ]);
+  ov.appendChild(md);document.body.appendChild(ov);
+  const onKey=(e)=>{if(e.key==='Escape')close()};document.addEventListener('keydown',onKey);
+  function close(){ov.remove();document.removeEventListener('keydown',onKey)}
 }
 
 /* toast */
