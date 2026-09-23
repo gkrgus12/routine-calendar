@@ -23,6 +23,9 @@ function load(){
   return {pages:[],events:[],settings:{defaultStart:'10:00',defaultDur:60}};
 }
 function save(){try{localStorage.setItem(KEY,JSON.stringify(S))}catch(e){}}
+// 테마: settings.theme = 'system' | 'light' | 'dark' (없으면 system). <html data-theme> 로 CSS 에 전달하고, 첫 렌더 전에 적용
+function applyTheme(){const t=S.settings.theme;if(t==='light'||t==='dark')document.documentElement.setAttribute('data-theme',t);else document.documentElement.removeAttribute('data-theme')}
+applyTheme();
 
 const today=ymd(new Date());
 let view={type:'month',ym:today.slice(0,7),pageId:null,weekStart:mondayOf(new Date())};
@@ -94,8 +97,14 @@ function renderSide(){
   });
   side.appendChild(pl);
   side.appendChild(h('button',{class:'add',onclick:addPage},['+ 새 루틴 페이지']));
+  // 테마 토글 (사이드바 맨 아래 세그먼트: 시스템 / 라이트 / 다크)
+  const cur=S.settings.theme||'system';
+  const seg=h('div',{class:'seg',role:'group','aria-label':'테마'});
+  [['system','시스템'],['light','라이트'],['dark','다크']].forEach(([k,label])=>seg.appendChild(h('button',{class:cur===k?'sel':'','aria-pressed':cur===k?'true':'false',onclick:()=>setTheme(k)},[label])));
+  side.appendChild(h('div',{class:'theme'},[h('span',{class:'tl'},['테마']),seg]));
   return side;
 }
+function setTheme(k){S.settings.theme=k;save();applyTheme();render()}
 function togglePage(p){
   if(!p.active){
     const cf=pageConflicts(p);

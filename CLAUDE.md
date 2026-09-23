@@ -72,6 +72,7 @@
 |---|---|---|
 | `defaultStart` | string | 새 약속의 기본 시작 시간 `"HH:MM"` (초기값 `"10:00"`) |
 | `defaultDur` | number | 새 약속의 기본 길이(분, 최소 5, 초기값 60) |
+| `theme` | string | `"system"` \| `"light"` \| `"dark"`. 없으면 system(OS 설정 따름). 사이드바 하단 세그먼트로 바꾸며 `applyTheme()` 이 `<html data-theme>` 에 반영 |
 
 `load()` 는 저장값에 `pages` 와 `events` 가 있으면 그대로 쓰고, 아니면 빈 상태로 시작한다. 마이그레이션 로직은 없다.
 

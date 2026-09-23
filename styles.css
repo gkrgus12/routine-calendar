@@ -14,7 +14,7 @@
   --field:rgba(118,118,128,.12); --field-hover:rgba(118,118,128,.20);
   --accent:#0A7AFF; --accent-ink:#FFFFFF; --accent-tint:rgba(10,122,255,.13);
   --warn:#D9730D; --warn-bg:rgba(255,149,0,.14); --danger:#E5343A; --green:#34C759; --today:#E3EEFF;
-  --toast-bg:rgba(28,28,30,.88);
+  --toast-bg:rgba(28,28,30,.88); --seg-sel:#FFFFFF;
   /* 페이지 색 (기능: 페이지 구분) */
   --p0:#2B6E8F; --p1:#5F7F3A; --p2:#8C4F9E; --p3:#B0562F; --p4:#3D7C74; --p5:#7A6A2F;
   --r-sm:8px; --r-md:12px; --r-lg:18px; --r-xl:22px;
@@ -32,7 +32,7 @@
   --field:rgba(118,118,128,.24); --field-hover:rgba(118,118,128,.34);
   --accent:#0A84FF; --accent-ink:#FFFFFF; --accent-tint:rgba(10,132,255,.20);
   --warn:#FF9F0A; --warn-bg:rgba(255,159,10,.16); --danger:#FF453A; --green:#30D158; --today:#1E3350;
-  --toast-bg:rgba(58,58,60,.88);
+  --toast-bg:rgba(58,58,60,.88); --seg-sel:#3A3F47;
   --p0:#5FA3C4; --p1:#9BBF6A; --p2:#C48AD6; --p3:#E08A63; --p4:#6FB8AE; --p5:#C4AE5C;
 }}
 :root[data-theme="dark"]{
@@ -46,7 +46,7 @@
   --field:rgba(118,118,128,.24); --field-hover:rgba(118,118,128,.34);
   --accent:#0A84FF; --accent-ink:#FFFFFF; --accent-tint:rgba(10,132,255,.20);
   --warn:#FF9F0A; --warn-bg:rgba(255,159,10,.16); --danger:#FF453A; --green:#30D158; --today:#1E3350;
-  --toast-bg:rgba(58,58,60,.88);
+  --toast-bg:rgba(58,58,60,.88); --seg-sel:#3A3F47;
   --p0:#5FA3C4; --p1:#9BBF6A; --p2:#C48AD6; --p3:#E08A63; --p4:#6FB8AE; --p5:#C4AE5C;
 }
 :root[data-theme="light"]{color-scheme:light}
@@ -96,6 +96,12 @@ input:focus,select:focus,button:focus-visible{outline:2px solid var(--accent);ou
 .side .sec{padding:16px 18px 6px;color:var(--muted);font-size:12px;font-weight:600}
 .side .add{margin:10px 16px 18px;background:var(--accent-tint);color:var(--accent);font-weight:600;border-radius:12px;padding:9px 12px}
 .side .add:hover{filter:brightness(.96)}
+.side .theme{margin:auto 16px 16px;padding-top:12px}
+.side .theme .tl{display:block;padding:0 2px 6px;color:var(--muted);font-size:12px;font-weight:600}
+.seg{display:flex;gap:2px;padding:3px;border-radius:10px;background:var(--field)}
+.seg button{flex:1;padding:5px 0;border:0;border-radius:8px;background:transparent;font-size:12px;font-weight:500;color:var(--muted)}
+.seg button:hover{background:var(--hover);color:var(--ink)}
+.seg button.sel{background:var(--seg-sel);color:var(--ink);font-weight:600;box-shadow:0 1px 3px rgba(0,0,0,.14)}
 .main{flex:1;min-width:0;display:flex;flex-direction:column;overflow:hidden;gap:12px}
 .bar{display:flex;align-items:center;gap:8px;padding:10px 14px;
   background:var(--glass);-webkit-backdrop-filter:var(--blur);backdrop-filter:var(--blur);
