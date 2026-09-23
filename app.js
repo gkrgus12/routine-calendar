@@ -196,10 +196,18 @@ function renderWeek(main){
   dates.forEach((d,i)=>{
     const col=h('div',{class:'tcol',style:'height:'+height+'px'});
     for(let hr=H0;hr<=H1;hr++)col.appendChild(h('div',{class:'hrline',style:'top:'+((hr-H0)*PX)+'px'}));
+    const blocks=[];
     act.forEach(p=>p.items.filter(it=>it.day===i&&it.start&&it.end).forEach(it=>{
       const s=Math.max(toMin(it.start),H0*60),e=Math.min(toMin(it.end),H1*60);if(e<=s)return;
-      col.appendChild(h('div',{class:'blk',style:`top:${(s-H0*60)/60*PX}px;height:${(e-s)/60*PX-2}px;background:${PCOL[p.color%PCOL.length]}`,title:`${p.name} · ${it.start}–${it.end} ${it.label||''}`},[h('div',{class:'l'},[it.label||p.name])]));
+      blocks.push({s,e,it,p});
     }));
+    const lay=layoutOverlaps(blocks);
+    blocks.forEach(({s,e,it,p},k)=>{
+      const {col:c,n}=lay[k];
+      // 겹치는 묶음은 폭을 n등분해 나란히. 겹치지 않으면(n=1) 기본 left/right 그대로. 3개 이상 겹치면 라벨 생략, title 툴팁만
+      const split=n>1?`;right:auto;left:calc(3px + (100% - 6px) * ${c} / ${n});width:calc((100% - 6px) / ${n} - ${c<n-1?2:0}px)`:'';
+      col.appendChild(h('div',{class:'blk',style:`top:${(s-H0*60)/60*PX}px;height:${(e-s)/60*PX-2}px;background:${PCOL[p.color%PCOL.length]}${split}`,title:`${p.name} · ${it.start}–${it.end} ${it.label||''}`},[n>=3?null:h('div',{class:'l'},[it.label||p.name])]));
+    });
     (evIdx[ymd(d)]||[]).forEach(ev=>{
       const s=Math.max(toMin(ev.startTime),H0*60),e=Math.min(toMin(ev.endTime),H1*60);if(e<=s)return;
       const cf=eventConflicts(ev).some(c=>c.date===ymd(d));
@@ -208,6 +216,25 @@ function renderWeek(main){
     grid.appendChild(col);
   });
   wrap.appendChild(grid);body.appendChild(wrap);main.appendChild(body);
+}
+
+// 같은 요일에서 겹치는 블록을 나란히 놓기 위한 열 배치 (구글 캘린더 방식).
+// 시작 시간순(같으면 긴 것 먼저)으로 훑으며 서로 이어져 겹치는 묶음(클러스터)을 만들고,
+// 묶음 안에서는 비어 있는 첫 열에 넣는다. 결과 n = 묶음의 열 수 → 폭을 n등분.
+function layoutOverlaps(blocks){ // blocks: [{s,e}] (분) → 같은 순서로 [{col,n}]
+  const order=blocks.map((_,i)=>i).sort((a,b)=>blocks[a].s-blocks[b].s||blocks[b].e-blocks[a].e);
+  const out=new Array(blocks.length);
+  let cluster=[],colEnds=[],clusterEnd=-1;
+  const flush=()=>{cluster.forEach(i=>out[i].n=colEnds.length);cluster=[];colEnds=[];clusterEnd=-1};
+  for(const i of order){
+    const b=blocks[i];
+    if(cluster.length&&b.s>=clusterEnd)flush();
+    let c=colEnds.findIndex(end=>end<=b.s);
+    if(c<0){c=colEnds.length;colEnds.push(b.e)}else colEnds[c]=b.e;
+    out[i]={col:c,n:1};cluster.push(i);clusterEnd=Math.max(clusterEnd,b.e);
+  }
+  flush();
+  return out;
 }
 
 /* page editor */
@@ -267,6 +294,11 @@ function renderEditGrid(p){
   grid.appendChild(tc);
   const col=PCOL[p.color%PCOL.length];
   const others=activeItems(p.id);
+  // 같은 페이지 안에서 서로 겹치는 아이템 (경고 테두리 + 툴팁). 충돌 로직(토스트·약속 경고)과는 별개로 표시만 한다
+  const ovl=new Set();
+  const its=p.items.filter(it=>it.start&&it.end);
+  for(let a=0;a<its.length;a++)for(let b=a+1;b<its.length;b++){const x=its[a],y=its[b];
+    if(x.day===y.day&&overlap(toMin(x.start),toMin(x.end),toMin(y.start),toMin(y.end))){ovl.add(x.id);ovl.add(y.id)}}
   const cols=[]; // 요일 컬럼 엘리먼트 (블록을 다른 요일로 옮길 때 참조)
   const dayAt=x=>{for(let i=0;i<7;i++){if(x<cols[i].getBoundingClientRect().right)return i}return 6};
   for(let day=0;day<7;day++){
@@ -279,7 +311,8 @@ function renderEditGrid(p){
     p.items.filter(it=>it.day===day&&it.start&&it.end).forEach(it=>{
       const s=Math.max(toMin(it.start),H0*60),e=Math.min(toMin(it.end),H1*60);if(e<=s)return;
       const lbl=h('div',{class:'l'},[it.label||'(이름 없음)']);
-      const blk=h('div',{class:'blk','data-id':it.id,style:`top:${(s-H0*60)/60*PX}px;height:${(e-s)/60*PX-2}px;background:${col}`,title:`${it.start}–${it.end} ${it.label||''}`},[lbl,h('div',{class:'rs t'}),h('div',{class:'rs b'})]);
+      const isOvl=ovl.has(it.id);
+      const blk=h('div',{class:'blk'+(isOvl?' ovl':''),'data-id':it.id,style:`top:${(s-H0*60)/60*PX}px;height:${(e-s)/60*PX-2}px;background:${col}`,title:(isOvl?'같은 페이지 루틴과 겹침 · ':'')+`${it.start}–${it.end} ${it.label||''}`},[lbl,h('div',{class:'rs t'}),h('div',{class:'rs b'})]);
       // 블록 조작: 본체 드래그=이동(다른 요일로도), 상단/하단 6px(.rs)=시작/끝 시간 조절. 30분 스냅, 최소 30분.
       // 5px 미만 움직임으로 놓으면 클릭 → 이름 편집기. 드래그 중엔 시간 텍스트를 실시간 표시하고 놓을 때 저장.
       let d=null;
