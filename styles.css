@@ -372,3 +372,17 @@ button[disabled]:active{transform:none}
 .blk.evb.cf{box-shadow:inset 3px 0 0 rgba(0,0,0,.22),inset 0 0 0 2px var(--warn)}
 @media (prefers-color-scheme: dark){:root:not([data-theme="light"]) .mgrid .ev{--tint:30%;color:color-mix(in srgb,var(--ec) 70%,#fff)}:root:not([data-theme="light"]) .mgrid .ev .tag{background:rgba(255,255,255,.14)}:root:not([data-theme="light"]) .blk.evb{box-shadow:inset 3px 0 0 rgba(255,255,255,.3)}:root:not([data-theme="light"]) .blk.evb.cf{box-shadow:inset 3px 0 0 rgba(255,255,255,.3),inset 0 0 0 2px var(--warn)}}
 :root[data-theme="dark"] .mgrid .ev{--tint:30%;color:color-mix(in srgb,var(--ec) 70%,#fff)}:root[data-theme="dark"] .mgrid .ev .tag{background:rgba(255,255,255,.14)}:root[data-theme="dark"] .blk.evb{box-shadow:inset 3px 0 0 rgba(255,255,255,.3)}:root[data-theme="dark"] .blk.evb.cf{box-shadow:inset 3px 0 0 rgba(255,255,255,.3),inset 0 0 0 2px var(--warn)}
+
+/* 3차: 상단바는 [오늘][‹ ›] 제목 — ‹ › 한 쌍을 왼쪽에 고정하고 제목을 그 옆에(제목 길이가 바뀌어도 화살표 자리 불변). 약속 추가·편집은 데스크톱 폭에서 팝오버(기준점 옆, 화살표, 360px, 딤 없음) */
+.bar .navpair{display:inline-flex;align-items:stretch;flex:none;background:var(--panel);border-radius:999px;box-shadow:0 1px 2px rgba(0,0,0,.08),0 0 0 1px rgba(0,0,0,.05);overflow:hidden}
+.bar .navpair button{background:transparent;box-shadow:none;border:0;border-radius:0;padding:6px 11px;min-width:34px;font-weight:600;font-size:14px;line-height:1.2;color:var(--ink)}
+.bar .navpair button+button{border-left:1px solid var(--grid-line)}
+.bar .navpair button:hover{background:var(--panel-hover)}
+.bar h2{margin:0 6px 0 4px;white-space:nowrap}
+.ov.clear{background:transparent;-webkit-backdrop-filter:none;backdrop-filter:none;align-items:flex-start;justify-content:flex-start;padding:0}
+.md.pop{position:fixed;width:360px;max-width:calc(100vw - 24px);max-height:none;overflow:visible;border-radius:14px;padding:16px 18px 18px;background:var(--panel);border:1px solid var(--line);box-shadow:0 12px 40px rgba(0,0,0,.22),0 0 0 1px rgba(0,0,0,.04);touch-action:auto}
+.md.pop h3{font-size:16px;margin-bottom:12px}
+.md.pop .cfbox{max-height:160px;overflow:auto}
+.md.pop .arrow{position:absolute;width:12px;height:12px;background:var(--panel);border:1px solid var(--line);transform:rotate(45deg);pointer-events:none}
+.md.pop[data-side="right"] .arrow{left:-7px;border-top:none;border-right:none}
+.md.pop[data-side="left"] .arrow{right:-7px;border-bottom:none;border-left:none}

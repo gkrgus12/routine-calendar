@@ -519,14 +519,13 @@ function renderMonth(main){
   const [y,m]=view.ym.split('-').map(Number);
   ensureGoogleEvents(view.ym);
   const bar=h('div',{class:'bar'},[
-    h('button',{class:'quiet',onclick:()=>{shiftMonth(-1)}},['‹']),
-    h('h2',null,[h('span',{class:'yr'},[`${y}년`]),' ',h('b',null,[`${m}월`])]),
-    h('button',{class:'quiet',onclick:()=>{shiftMonth(1)}},['›']),
     h('button',{class:'quiet',onclick:()=>{view.ym=today.slice(0,7);render()}},['오늘']),
+    h('div',{class:'navpair'},[h('button',{onclick:()=>{shiftMonth(-1)}},['‹']),h('button',{onclick:()=>{shiftMonth(1)}},['›'])]),
+    h('h2',null,[h('span',{class:'yr'},[`${y}년`]),' ',h('b',null,[`${m}월`])]),
     h('span',{class:'sp'}),
     calSeg(),
     h('span',{class:'sp'}),
-    h('button',{class:'primary',onclick:()=>openEvent(null,today)},['+ 약속'])
+    h('button',{class:'primary',onclick:e=>openEvent(null,today,null,{el:e.currentTarget,x:e.clientX,y:e.clientY})},['+ 약속'])
   ]);
   main.appendChild(bar);
   const body=h('div',{class:'body'});
@@ -539,12 +538,12 @@ function renderMonth(main){
     const d=new Date(start);d.setDate(start.getDate()+i);
     const key=ymd(d);const out=d.getMonth()!==m-1;
     if(i===35&&out)break;
-    const cell=h('div',{class:'day'+(out?' out':'')+(key===today?' today':'')+(wd(d)===6?' sun':''),onclick:()=>openEvent(null,key)},[h('span',{class:'n'},[String(d.getDate())])]);
+    const cell=h('div',{class:'day'+(out?' out':'')+(key===today?' today':'')+(wd(d)===6?' sun':''),onclick:e=>openEvent(null,key,null,{x:e.clientX,y:e.clientY})},[h('span',{class:'n'},[String(d.getDate())])]);
     (evByDate[key]||[]).forEach(ev=>{
       const cf=!ev.allDay&&eventConflicts(ev).some(c=>c.date===key);
       // 구글 이벤트는 점선 테두리(.g), 종일 이벤트는 날짜 상단 한 줄(.allday, 정렬로 맨 위)
       const tmp=!ev.google&&G.status!=='on'; // 미연결 상태의 로컬 약속 = 임시 배지 (구글/로컬 구분 표기는 그 외에 없음)
-      cell.appendChild(h('div',{class:'ev'+(ev.allDay?' allday':'')+(tmp?' tmp':''),style:eventStyle('chip'),'data-src':ev.google?'g':'l',title:ev.title,onclick:(e)=>{e.stopPropagation();openEvent(ev.src||ev)}},[
+      cell.appendChild(h('div',{class:'ev'+(ev.allDay?' allday':'')+(tmp?' tmp':''),style:eventStyle('chip'),'data-src':ev.google?'g':'l',title:ev.title,onclick:(e)=>{e.stopPropagation();openEvent(ev.src||ev,null,null,{el:e.currentTarget,x:e.clientX,y:e.clientY})}},[
         cf?h('span',{class:'cf',title:'활성 루틴과 겹침'}):null,
         tmp?h('span',{class:'tag'},['임시']):null,
         ev.allDay?null:h('span',{class:'t'},[ev.startTime]),h('span',{class:'ti'},[ev.title||'(제목 없음)'])
@@ -575,10 +574,9 @@ function renderWeek(main){
   view.weekStart=weekStartOf(view.weekStart||new Date());const ws=view.weekStart;const we=new Date(ws);we.setDate(ws.getDate()+6);
   ensureGoogleEvents(ymd(ws).slice(0,7));
   const bar=h('div',{class:'bar'},[
-    h('button',{class:'quiet',onclick:()=>{view.weekStart.setDate(view.weekStart.getDate()-7);render()}},['‹']),
-    h('h2',null,[`${ws.getMonth()+1}월 ${ws.getDate()}일 – ${we.getMonth()+1}월 ${we.getDate()}일`]),
-    h('button',{class:'quiet',onclick:()=>{view.weekStart.setDate(view.weekStart.getDate()+7);render()}},['›']),
     h('button',{class:'quiet',onclick:()=>{view.weekStart=weekStartOf(new Date());render()}},['이번 주']),
+    h('div',{class:'navpair'},[h('button',{onclick:()=>{view.weekStart.setDate(view.weekStart.getDate()-7);render()}},['‹']),h('button',{onclick:()=>{view.weekStart.setDate(view.weekStart.getDate()+7);render()}},['›'])]),
+    h('h2',null,[`${ws.getMonth()+1}월 ${ws.getDate()}일 – ${we.getMonth()+1}월 ${we.getDate()}일`]),
     h('span',{class:'sp'}),
     calSeg(),
     h('span',{class:'sp'}),
@@ -593,14 +591,13 @@ function renderDay(main){
   const d=parse(view.day);
   ensureGoogleEvents(view.day.slice(0,7));
   const bar=h('div',{class:'bar'},[
-    h('button',{class:'quiet',onclick:()=>shiftDay(-1)},['‹']),
-    h('h2',null,[`${d.getMonth()+1}월 ${d.getDate()}일 (${DAYS[wd(d)]})`]),
-    h('button',{class:'quiet',onclick:()=>shiftDay(1)},['›']),
     h('button',{class:'quiet',onclick:()=>{view.day=today;render()}},['오늘']),
+    h('div',{class:'navpair'},[h('button',{onclick:()=>shiftDay(-1)},['‹']),h('button',{onclick:()=>shiftDay(1)},['›'])]),
+    h('h2',null,[`${d.getMonth()+1}월 ${d.getDate()}일 (${DAYS[wd(d)]})`]),
     h('span',{class:'sp'}),
     calSeg(),
     h('span',{class:'sp'}),
-    h('button',{class:'primary',onclick:()=>openEvent(null,view.day)},['+ 약속'])
+    h('button',{class:'primary',onclick:e=>openEvent(null,view.day,null,{el:e.currentTarget,x:e.clientX,y:e.clientY})},['+ 약속'])
   ]);
   main.appendChild(bar);
   main.appendChild(timeGridBody([d],'day:'+view.day));
@@ -631,7 +628,7 @@ function timeGridBody(dates,key){
   const adWeek=dates.map(d=>(evIdx[ymd(d)]||[]).filter(ev=>ev.allDay));
   if(adWeek.some(a=>a.length)){
     grid.appendChild(h('div',{class:'wad lab'},['종일']));
-    adWeek.forEach(list=>grid.appendChild(h('div',{class:'wad'},list.map(ev=>h('div',{class:'ev allday',style:eventStyle(),'data-src':ev.google?'g':'l',title:ev.title,onclick:()=>openEvent(ev.src||ev)},[h('span',{class:'ti'},[ev.title])])))));
+    adWeek.forEach(list=>grid.appendChild(h('div',{class:'wad'},list.map(ev=>h('div',{class:'ev allday',style:eventStyle(),'data-src':ev.google?'g':'l',title:ev.title,onclick:e=>openEvent(ev.src||ev,null,null,{el:e.currentTarget,x:e.clientX,y:e.clientY})},[h('span',{class:'ti'},[ev.title])])))));
   }
   // 접힌 띠: [lo,hi) 시간대에 걸친 루틴·약속 개수를 세서 표시. 아무것도 없으면 아주 얇게
   const countHidden=(lo,hi)=>{const rt=new Set(),ev=new Set();
@@ -670,7 +667,7 @@ function timeGridBody(dates,key){
       const tmp=!ev.google&&G.status!=='on';
       const segCls=ev.seg==='head'?' seg-head':ev.seg==='tail'?' seg-tail':ev.seg==='mid'?' seg-mid':'';
       // 약속 블록은 pointerdown 을 막아 열(드래그 생성)로 안 가게 하고, 클릭하면 편집 (조각은 원본 src 로)
-      col.appendChild(h('div',{class:'blk evb'+(cf?' cf':'')+segCls+((e-s)>=60?' tall':''),'data-src':ev.google?'g':'l',style:`top:${cy((s-H0*60)/60)};height:calc(var(--px) * ${(e-s)/60} - 2px);${eventStyle()}`,title:ev.title+(cf?' · 활성 루틴과 겹침':''),onpointerdown:e=>e.stopPropagation(),onclick:()=>openEvent(ev.src||ev)},[h('div',{class:'l'},[(tmp?'임시 · ':'')+(ev.title||'(제목 없음)')]),(e-s)>=60?h('div',{class:'tm'},[ev.startTime+'–'+ev.endTime]):null]));
+      col.appendChild(h('div',{class:'blk evb'+(cf?' cf':'')+segCls+((e-s)>=60?' tall':''),'data-src':ev.google?'g':'l',style:`top:${cy((s-H0*60)/60)};height:calc(var(--px) * ${(e-s)/60} - 2px);${eventStyle()}`,title:ev.title+(cf?' · 활성 루틴과 겹침':''),onpointerdown:e=>e.stopPropagation(),onclick:e=>openEvent(ev.src||ev,null,null,{el:e.currentTarget,x:e.clientX,y:e.clientY})},[h('div',{class:'l'},[(tmp?'임시 · ':'')+(ev.title||'(제목 없음)')]),(e-s)>=60?h('div',{class:'tm'},[ev.startTime+'–'+ev.endTime]):null]));
     });
     // 빈 시간(또는 배경인 루틴 블록 위) 드래그 → 약속 생성. 편집 그리드와 같은 30분 스냅·고스트. 5px 미만 움직임은 클릭 = 기본 길이
     let drag=null,ghost=null;
@@ -682,12 +679,12 @@ function timeGridBody(dates,key){
       ghost=h('div',{class:'blk evb ghost',style:eventStyle()});col.appendChild(ghost);paint();
     });
     col.addEventListener('pointermove',ev=>{if(!drag)return;if(!drag.moved&&Math.hypot(ev.clientX-drag.x0,ev.clientY-drag.y0)>=5)drag.moved=true;drag.e=slotAt(ev);paint()});
-    const finish=()=>{
+    const finish=(pe)=>{
       if(!drag)return;const dg=drag;drag=null;ghost&&ghost.remove();ghost=null;
       const a=Math.min(dg.s,dg.e),b=Math.max(dg.s,dg.e)+1;
       const st=H0*60+a*SLOT;
       const en=Math.min(dg.moved?H0*60+b*SLOT:st+cfg('defaultDur'),1439); // time 입력은 24:00 을 못 보여주므로 23:59 까지
-      openEvent(null,ymd(d),{startTime:fromMin(st),endTime:fromMin(Math.max(en,st+1))});
+      openEvent(null,ymd(d),{startTime:fromMin(st),endTime:fromMin(Math.max(en,st+1))},pe&&typeof pe.clientX==='number'?{x:pe.clientX,y:pe.clientY}:null); // 팝오버는 드래그를 놓은 지점 옆에
     };
     col.addEventListener('pointerup',finish);col.addEventListener('pointercancel',()=>{drag=null;ghost&&ghost.remove();ghost=null});
     grid.appendChild(col);
@@ -962,7 +959,49 @@ function dismissSheet(ov,md){ // 닫힘: 시트는 아래로 사라지고 딤은
   const m=/translateY\((-?[\d.]+)px\)/.exec(md.style.transform||'');const cur=m?Number(m[1]):0;
   Promise.all([anim(md,{y:[cur,72],opacity:[1,0]},{duration:160,easing:'ease-in',fill:'forwards'}),anim(ov,{opacity:[1,0]},{duration:160,easing:'ease-in',fill:'forwards'})]).then(()=>ov.remove());
 }
-function openEvent(ev,dateKey,preset){ // preset: 드래그 생성 시 {startTime,endTime}
+/* ---------- 팝오버 (약속 추가·편집, 데스크톱 폭): 기준점 = 클릭한 블록·버튼 사각형과 클릭/드래그 끝 지점. 오른쪽 → 왼쪽 → (둘 다 안 들어가면) 지점 기준으로 두고, 세로는 기준점 중앙에 맞춘 뒤 화면 안으로 민다. 폭 360, 딤 없음, Esc·바깥 클릭으로 닫힘 ---------- */
+const POP_GAP=10,POP_M=12;
+const usePopover=()=>innerWidth>720; // 모바일 폭은 기존 하단 시트
+function anchorRects(anchor){ // 후보 사각형 순서: 요소 사각형 → 지점(1×1)
+  const out=[];if(!anchor)return out;
+  const el=anchor.el||(anchor instanceof Element?anchor:null);
+  if(el&&el.isConnected){const r=el.getBoundingClientRect();out.push({left:r.left,right:r.right,top:r.top,bottom:r.bottom})}
+  if(typeof anchor.x==='number'&&typeof anchor.y==='number')out.push({left:anchor.x,right:anchor.x,top:anchor.y,bottom:anchor.y});
+  return out;
+}
+function openPopover(ov,md,anchor){
+  ov.classList.add('clear');md.classList.add('pop');
+  const arrow=h('i',{class:'arrow','aria-hidden':'true'});md.appendChild(arrow);
+  ov.appendChild(md);document.body.appendChild(ov);
+  const rects=anchorRects(anchor);
+  if(!rects.length){const cx=innerWidth/2,cy=innerHeight/2;rects.push({left:cx,right:cx,top:cy,bottom:cy})} // 기준점 없으면 화면 가운데
+  const place=()=>{
+    const vw=innerWidth,vh=innerHeight,w=md.offsetWidth,hh=md.offsetHeight;
+    let left=null,side='right',a=rects[0];
+    for(const r of rects){ // 요소 사각형부터: 오른쪽에 들어가면 오른쪽, 아니면 왼쪽. 둘 다 안 되면 지점으로 다시
+      if(r.right+POP_GAP+w<=vw-POP_M){left=r.right+POP_GAP;side='right';a=r;break}
+      if(r.left-POP_GAP-w>=POP_M){left=r.left-POP_GAP-w;side='left';a=r;break}
+    }
+    if(left===null){a=rects[rects.length-1];side='right';left=Math.min(vw-POP_M-w,Math.max(POP_M,a.right+POP_GAP))}
+    const cy=(a.top+a.bottom)/2;
+    const top=Math.max(POP_M,Math.min(vh-POP_M-hh,cy-hh/2)); // 기준점 세로 중앙에 맞추고, 아래·위가 부족하면 밀어서 화면 안에
+    const ay=Math.max(18,Math.min(hh-18,cy-top)); // 화살표는 기준점을 가리키되 모서리 안쪽에
+    md.style.left=left+'px';md.style.top=top+'px';md.dataset.side=side;
+    arrow.style.top=(ay-6)+'px';
+    md.style.transformOrigin=(side==='right'?0:w)+'px '+ay+'px'; // 기준점 쪽에서 커지며 등장
+  };
+  place();
+  anim(md,{scale:[.9,1],opacity:[0,1]},{duration:120,bounce:.2});
+  let ro=null;try{ro=new ResizeObserver(()=>place());ro.observe(md)}catch(e){} // 충돌 경고가 늘어나 높이가 바뀌어도 화면 안에
+  addEventListener('resize',place);
+  md._place=place;md._popCleanup=()=>{ro&&ro.disconnect();removeEventListener('resize',place)};
+}
+function dismissPopover(ov,md){
+  if(ov.dataset.closing)return;ov.dataset.closing='1';ov.style.pointerEvents='none';
+  md._popCleanup&&md._popCleanup();
+  anim(md,{scale:[1,.96],opacity:[1,0]},{duration:100,easing:'ease-in',fill:'forwards'}).then(()=>ov.remove());
+}
+function openEvent(ev,dateKey,preset,anchor){ // preset: 드래그 생성 시 {startTime,endTime}. anchor: {el,x,y} 팝오버 기준점(데스크톱)
   // 연결돼 있으면 새 약속과 구글 이벤트는 구글 캘린더(primary)에 직접 쓴다. 로컬 약속은 미연결 상태에서만 새로 만들 수 있고, 남아 있는 로컬 약속은 "임시" 로 편집·삭제만 된다
   const isNew=!ev;
   const gmode=G.status==='on'&&(isNew||!!(ev&&ev.google));
@@ -982,7 +1021,8 @@ function openEvent(ev,dateKey,preset){ // preset: 드래그 생성 시 {startTim
     if(cf.length>8)ul.appendChild(h('li',null,[`외 ${cf.length-8}개`]));
     cfBox.appendChild(h('div',{class:'cfbox'},[`활성 루틴과 ${cf.length}건 겹쳐요. 저장은 됩니다.`,ul]));
   }
-  const inp=(k,type,extra)=>h('input',{type,value:draft[k],...(extra||{}),oninput:(e)=>{draft[k]=e.target.value;if(k==='startDate'&&draft.endDate<draft.startDate){draft.endDate=draft.startDate;edI.value=draft.endDate}refreshCf()}});
+  const afterCf=()=>{if(md._place)md._place()}; // 팝오버: 경고 박스로 높이가 바뀌면 자리를 다시 잡는다
+  const inp=(k,type,extra)=>h('input',{type,value:draft[k],...(extra||{}),oninput:(e)=>{draft[k]=e.target.value;if(k==='startDate'&&draft.endDate<draft.startDate){draft.endDate=draft.startDate;edI.value=draft.endDate}refreshCf();afterCf()}});
   const edI=inp('endDate','date');
   const form=h('div',{class:'f'},[
     h('label',{class:'full'},['제목',inp('title','text',{placeholder:'무슨 약속?',autofocus:''})]),
@@ -1029,10 +1069,10 @@ function openEvent(ev,dateKey,preset){ // preset: 드래그 생성 시 {startTim
       }},[isNew?'추가':'저장'])
     ])
   ]);
-  openSheet(ov,md,close);
-  refreshCf();
+  const pop=usePopover();if(pop)openPopover(ov,md,anchor);else openSheet(ov,md,close);
+  refreshCf();afterCf();
   const onKey=(e)=>{if(e.key==='Escape'&&!busy)close()};document.addEventListener('keydown',onKey);
-  function close(){dismissSheet(ov,md);document.removeEventListener('keydown',onKey)}
+  function close(){(pop?dismissPopover:dismissSheet)(ov,md);document.removeEventListener('keydown',onKey)}
   setTimeout(()=>{const t=md.querySelector('input[type=text]');t&&t.focus()},0);
 }
 /* settings modal (좌측 탭: 일반 / 약속 / 백업). 모든 뷰의 상단바 ⚙ 설정 버튼으로 연다 */
