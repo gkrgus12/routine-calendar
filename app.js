@@ -107,6 +107,97 @@ function mergeBackup(data){
   return {addP,addI,addE,dup};
 }
 
+/* ---------- google calendar (읽기 전용) ---------- */
+// 서버 없이 브라우저에서 Google Identity Services(토큰 클라이언트) + Calendar API v3 를 직접 호출한다.
+// 토큰은 G.token(메모리)에만 두고 절대 localStorage 에 쓰지 않는다 → 새로고침하면 다시 연결해야 한다.
+const GOOGLE_SCOPE='https://www.googleapis.com/auth/calendar.readonly';
+const G={status:'off',token:null,expiresAt:0,email:'',events:[],anchor:null,loading:null,syncedAt:null,error:''}; // status: off | connecting | on | expired
+const googleClientId=()=>window.GOOGLE_CLIENT_ID||''; // config.js 의 var GOOGLE_CLIENT_ID
+let onGoogleChange=null; // 설정 모달 구글 탭이 열려 있으면 패널 다시 그리기
+const notifyGoogle=()=>{render();if(onGoogleChange)onGoogleChange()};
+let gisPromise=null;
+function loadGis(){ // GIS 스크립트는 연결을 시도할 때만 로드 (미연결 상태에선 외부 요청 없음)
+  if(window.google&&google.accounts&&google.accounts.oauth2)return Promise.resolve();
+  if(!gisPromise)gisPromise=new Promise((res,rej)=>{const el=document.createElement('script');el.src='https://accounts.google.com/gsi/client';el.async=true;el.defer=true;el.onload=()=>res();el.onerror=()=>{gisPromise=null;rej(new Error('Google 스크립트를 불러오지 못했어요'))};document.head.appendChild(el)});
+  return gisPromise;
+}
+async function googleConnect(){
+  if(!googleClientId()){toast('config.js 에 GOOGLE_CLIENT_ID 가 없어요');return}
+  if(G.status==='connecting')return;
+  G.status='connecting';G.error='';if(onGoogleChange)onGoogleChange();
+  try{
+    await loadGis();
+    const tok=await new Promise((res,rej)=>{
+      const tc=google.accounts.oauth2.initTokenClient({client_id:googleClientId(),scope:GOOGLE_SCOPE,
+        callback:r=>r&&r.access_token?res(r):rej(new Error(r&&r.error?String(r.error):'연결이 취소됐어요')),
+        error_callback:e=>rej(new Error(e&&e.type==='popup_closed'?'연결 창이 닫혔어요':(e&&e.message)||'연결에 실패했어요'))});
+      tc.requestAccessToken({prompt:''});
+    });
+    G.token=tok.access_token;G.expiresAt=Date.now()+(Number(tok.expires_in)||3600)*1000;G.status='on';
+    const cal=await gapiFetch('https://www.googleapis.com/calendar/v3/calendars/primary'); // primary 캘린더 id = 계정 이메일
+    G.email=cal.id||'';G.anchor=null;G.events=[];
+    toast(`Google 연결됨: ${G.email}`);
+  }catch(e){
+    if(G.status!=='expired'){G.status=G.token?'on':'off';}
+    G.error=e&&e.message?e.message:String(e);toast('Google 연결 실패: '+G.error);
+  }
+  notifyGoogle();
+}
+function googleDisconnect(){
+  const t=G.token;
+  if(t&&window.google&&google.accounts&&google.accounts.oauth2)try{google.accounts.oauth2.revoke(t,()=>{})}catch(e){}
+  G.token=null;G.status='off';G.email='';G.events=[];G.anchor=null;G.loading=null;G.syncedAt=null;G.error='';
+  toast('Google 연결을 해제했어요. 로컬 데이터는 그대로예요.');notifyGoogle();
+}
+function googleExpire(){G.token=null;G.status='expired';G.events=[];G.anchor=null;G.loading=null;notifyGoogle()}
+async function gapiFetch(url){
+  if(!G.token)throw new Error('연결되지 않았어요');
+  if(Date.now()>G.expiresAt){googleExpire();throw new Error('토큰이 만료됐어요. 다시 연결하세요')}
+  const r=await fetch(url,{headers:{Authorization:'Bearer '+G.token}});
+  if(r.status===401){googleExpire();throw new Error('토큰이 만료됐어요. 다시 연결하세요')}
+  if(!r.ok)throw new Error('Google API 오류 '+r.status);
+  return r.json();
+}
+// 표시 중인 달(ym) ±1개월 범위의 이벤트를 가져온다. 같은 달이면 캐시(G.events) 사용. 월을 옮기면 다시 조회. 끝나면 다시 그린다
+function ensureGoogleEvents(ym){
+  if(G.status!=='on'||G.anchor===ym||G.loading===ym)return;
+  G.loading=ym;
+  const [y,m]=ym.split('-').map(Number);
+  const from=new Date(y,m-2,1),to=new Date(y,m+1,1); // [전달 1일, 다다음달 1일)
+  fetchGoogleEvents(from,to)
+    .then(evs=>{if(G.loading!==ym)return;G.events=evs;G.anchor=ym;G.loading=null;G.syncedAt=new Date();notifyGoogle()})
+    .catch(e=>{if(G.loading===ym)G.loading=null;G.error=e&&e.message?e.message:String(e);if(G.status==='on')toast('구글 캘린더 조회 실패: '+G.error);else if(G.status==='expired')toast(G.error);if(onGoogleChange)onGoogleChange()});
+}
+async function fetchGoogleEvents(from,to){
+  const out=[];let pageToken='';
+  do{
+    const u=new URL('https://www.googleapis.com/calendar/v3/calendars/primary/events');
+    u.searchParams.set('timeMin',from.toISOString());u.searchParams.set('timeMax',to.toISOString());
+    u.searchParams.set('singleEvents','true');u.searchParams.set('orderBy','startTime');u.searchParams.set('maxResults','2500');
+    if(pageToken)u.searchParams.set('pageToken',pageToken);
+    const j=await gapiFetch(u.toString());
+    for(const it of j.items||[]){const ev=toLocalEvent(it);if(ev)out.push(ev)}
+    pageToken=j.nextPageToken||'';
+  }while(pageToken);
+  return out;
+}
+// 구글 이벤트 → 로컬 약속 모양 {id,title,startDate,endDate,startTime,endTime} + google:true, allDay.
+// 종일 이벤트는 end.date 가 exclusive 라 하루 뺀다. 시간 이벤트가 자정을 넘기면 시작한 날 24:00 까지로 자른다
+function toLocalEvent(it){
+  if(!it||it.status==='cancelled')return null;
+  const base={id:'g:'+it.id,title:it.summary||'(제목 없음)',google:true,link:it.htmlLink||''};
+  if(it.start&&it.start.date){
+    const e=parse((it.end&&it.end.date)||it.start.date);e.setDate(e.getDate()-1);
+    const endDate=ymd(e)<it.start.date?it.start.date:ymd(e);
+    return {...base,allDay:true,startDate:it.start.date,endDate,startTime:'00:00',endTime:'24:00'};
+  }
+  if(!(it.start&&it.start.dateTime))return null;
+  const s=new Date(it.start.dateTime),e=new Date((it.end&&it.end.dateTime)||it.start.dateTime);
+  const sd=ymd(s),sm=s.getHours()*60+s.getMinutes();
+  const em=ymd(e)===sd?Math.max(e.getHours()*60+e.getMinutes(),sm+1):1440;
+  return {...base,allDay:false,startDate:sd,endDate:sd,startTime:fromMin(sm),endTime:fromMin(em)};
+}
+
 /* ---------- conflict logic ---------- */
 function activeItems(exceptPageId){
   const out=[];
@@ -225,6 +316,7 @@ function renderMain(){
 /* month */
 function renderMonth(main){
   const [y,m]=view.ym.split('-').map(Number);
+  ensureGoogleEvents(view.ym);
   const bar=h('div',{class:'bar'},[
     h('button',{class:'quiet',onclick:()=>{shiftMonth(-1)}},['‹']),
     h('h2',null,[`${y}년 ${m}월`]),
@@ -247,10 +339,11 @@ function renderMonth(main){
     if(i===35&&out)break;
     const cell=h('div',{class:'day'+(out?' out':'')+(key===today?' today':'')+(wd(d)===6?' sun':''),onclick:()=>openEvent(null,key)},[h('span',{class:'n'},[String(d.getDate())])]);
     (evByDate[key]||[]).forEach(ev=>{
-      const cf=eventConflicts(ev).some(c=>c.date===key);
-      cell.appendChild(h('div',{class:'ev',title:ev.title,onclick:(e)=>{e.stopPropagation();openEvent(ev)}},[
+      const cf=!ev.allDay&&eventConflicts(ev).some(c=>c.date===key);
+      // 구글 이벤트는 점선 테두리(.g), 종일 이벤트는 날짜 상단 한 줄(.allday, 정렬로 맨 위)
+      cell.appendChild(h('div',{class:'ev'+(ev.google?' g':'')+(ev.allDay?' allday':''),title:(ev.google?'[구글] ':'')+ev.title,onclick:(e)=>{e.stopPropagation();openEvent(ev)}},[
         cf?h('span',{class:'cf',title:'활성 루틴과 겹침'}):null,
-        h('span',{class:'t'},[ev.startTime]),h('span',{class:'ti'},[ev.title||'(제목 없음)'])
+        ev.allDay?null:h('span',{class:'t'},[ev.startTime]),h('span',{class:'ti'},[ev.title||'(제목 없음)'])
       ]));
     });
     grid.appendChild(cell);
@@ -259,17 +352,18 @@ function renderMonth(main){
   main.appendChild(body);
 }
 function shiftMonth(n){const [y,m]=view.ym.split('-').map(Number);const d=new Date(y,m-1+n,1);view.ym=d.getFullYear()+'-'+pad(d.getMonth()+1);render()}
-function indexEvents(){
+function indexEvents(){ // 로컬 약속 + (연결돼 있으면) 구글 이벤트. 날짜별로 종일 먼저, 그다음 시작 시간순
   const idx={};
-  for(const ev of S.events){ let d=parse(ev.startDate),e=parse(ev.endDate);if(e<d)e=d;
+  for(const ev of [...S.events,...(G.status==='on'?G.events:[])]){ let d=parse(ev.startDate),e=parse(ev.endDate);if(e<d)e=d;
     for(;d<=e;d.setDate(d.getDate()+1)){(idx[ymd(d)]=idx[ymd(d)]||[]).push(ev)} }
-  for(const k in idx)idx[k].sort((a,b)=>a.startTime.localeCompare(b.startTime));
+  for(const k in idx)idx[k].sort((a,b)=>(b.allDay?1:0)-(a.allDay?1:0)||a.startTime.localeCompare(b.startTime));
   return idx;
 }
 
 /* week */
 function renderWeek(main){
   view.weekStart=weekStartOf(view.weekStart||new Date());const ws=view.weekStart;const we=new Date(ws);we.setDate(ws.getDate()+6);
+  ensureGoogleEvents(ymd(ws).slice(0,7));
   const bar=h('div',{class:'bar'},[
     h('button',{class:'quiet',onclick:()=>{view.weekStart.setDate(view.weekStart.getDate()-7);render()}},['‹']),
     h('h2',null,[`${ws.getMonth()+1}월 ${ws.getDate()}일 – ${we.getMonth()+1}월 ${we.getDate()}일`]),
@@ -285,16 +379,23 @@ function renderWeek(main){
   const lg=h('div',{class:'legend'});
   act.forEach(p=>lg.appendChild(h('span',null,[h('i',{style:'background:'+PCOL[p.color%PCOL.length]}),p.name])));
   lg.appendChild(h('span',null,[h('i',{style:'border:1.5px solid var(--ink);background:transparent'}),'약속']));
+  if(G.status==='on')lg.appendChild(h('span',null,[h('i',{style:'border:1.5px dashed var(--ink);background:transparent'}),'구글']));
   body.appendChild(lg);
   const H0=cfg('dayStart'),H1=cfg('dayEnd'),PX=44;const height=(H1-H0)*PX;
   const wrap=h('div',{class:'wwrap'});
   const grid=h('div',{class:'wgrid'});
   grid.appendChild(h('div',{class:'whd'},['']));
   const dates=[];for(let i=0;i<7;i++){const d=new Date(ws);d.setDate(ws.getDate()+i);dates.push(d);grid.appendChild(h('div',{class:'whd'+(ymd(d)===today?' today':'')},[`${DAYS[wd(d)]} ${d.getDate()}`]))}
+  const evIdx=indexEvents();
+  // 종일(구글) 이벤트 줄: 이 주에 하나라도 있으면 헤더 아래에 한 줄 추가
+  const adWeek=dates.map(d=>(evIdx[ymd(d)]||[]).filter(ev=>ev.allDay));
+  if(adWeek.some(a=>a.length)){
+    grid.appendChild(h('div',{class:'wad lab'},['종일']));
+    adWeek.forEach(list=>grid.appendChild(h('div',{class:'wad'},list.map(ev=>h('div',{class:'ev g allday',title:'[구글] '+ev.title,onclick:()=>openEvent(ev)},[h('span',{class:'ti'},[ev.title])])))));
+  }
   const tc=h('div',{class:'tcol first',style:'height:'+height+'px'});
   for(let hr=H0;hr<H1;hr++)tc.appendChild(h('div',{class:'hrlab',style:'top:'+((hr-H0)*PX)+'px'},[pad(hr)+':00'])); // 시간 축 열에는 가로선 없이 라벨만
   grid.appendChild(tc);
-  const evIdx=indexEvents();
   dates.forEach((d,i)=>{
     const col=h('div',{class:'tcol',style:'height:'+height+'px'});
     for(let hr=H0;hr<=H1;hr++)col.appendChild(h('div',{class:'hrline',style:'top:'+((hr-H0)*PX)+'px'}));
@@ -312,9 +413,10 @@ function renderWeek(main){
       col.appendChild(h('div',{class:'blk',style:`top:${(s-H0*60)/60*PX}px;height:${(e-s)/60*PX-2}px;${blockStyle(p,it.label)}${split}`,title:`${p.name} · ${it.start}–${it.end} ${it.label||''}`},[n>=3?null:h('div',{class:'l'},[it.label||p.name])]));
     });
     (evIdx[ymd(d)]||[]).forEach(ev=>{
+      if(ev.allDay)return; // 종일은 위 줄에
       const s=Math.max(toMin(ev.startTime),H0*60),e=Math.min(toMin(ev.endTime),H1*60);if(e<=s)return;
       const cf=eventConflicts(ev).some(c=>c.date===ymd(d));
-      col.appendChild(h('div',{class:'blk evb'+(cf?' cf':''),style:`top:${(s-H0*60)/60*PX}px;height:${(e-s)/60*PX-2}px`,title:ev.title,onclick:()=>openEvent(ev)},[h('div',{class:'l'},[ev.title||'(제목 없음)'])]));
+      col.appendChild(h('div',{class:'blk evb'+(cf?' cf':'')+(ev.google?' g':''),style:`top:${(s-H0*60)/60*PX}px;height:${(e-s)/60*PX-2}px`,title:(ev.google?'[구글] ':'')+ev.title,onclick:()=>openEvent(ev)},[h('div',{class:'l'},[ev.title||'(제목 없음)'])]));
     });
     grid.appendChild(col);
   });
@@ -544,6 +646,7 @@ function openLabelEditor(p,it,isNew,grid,opts){
 
 /* event modal */
 function openEvent(ev,dateKey){
+  if(ev&&ev.google){toast('구글 캘린더 이벤트예요. 편집·삭제는 구글 캘린더에서 하세요.');return} // 이 단계에선 읽기 전용
   const isNew=!ev;
   const draft=ev?{...ev}:{id:uid(),title:'',startDate:dateKey||today,endDate:dateKey||today,startTime:cfg('defaultStart'),endTime:fromMin(Math.min(toMin(cfg('defaultStart'))+cfg('defaultDur'),1439))};
   const ov=h('div',{class:'ov',onclick:(e)=>{if(e.target===ov)close()}});
@@ -599,13 +702,13 @@ function exportBackup(){
   toast(`내보냈어요: ${name}`);
 }
 function openSettings(tab){
-  const TABS=[['general','일반'],['event','약속'],['backup','백업']];
+  const TABS=[['general','일반'],['event','약속'],['google','구글'],['backup','백업']];
   let cur=TABS.some(([k])=>k===tab)?tab:'general';
   const ov=h('div',{class:'ov',onclick:(e)=>{if(e.target===ov)close()}});
   const tabs=h('div',{class:'stabs',role:'tablist'});
   const pane=h('div',{class:'spane'});
   function drawTabs(){tabs.innerHTML='';TABS.forEach(([k,label])=>tabs.appendChild(h('button',{class:k===cur?'sel':'',role:'tab','aria-selected':k===cur?'true':'false',onclick:()=>{cur=k;drawTabs();drawPane()}},[label])))}
-  function drawPane(){pane.innerHTML='';({general:generalTab,event:eventTab,backup:backupTab})[cur](pane)}
+  function drawPane(){pane.innerHTML='';({general:generalTab,event:eventTab,google:googleTab,backup:backupTab})[cur](pane)}
   // 값이 바뀌면 바로 저장·적용한다. 모달은 body 에 붙어 있어 render() 에 지워지지 않으므로 패널만 다시 그린다
   const apply=fn=>{fn();save();render();drawPane()};
   const seg=(name,options,value,onPick)=>{const el=h('div',{class:'seg',role:'group','aria-label':name});options.forEach(([k,label])=>el.appendChild(h('button',{class:value===k?'sel':'','aria-pressed':value===k?'true':'false',onclick:()=>onPick(k)},[label])));return el};
@@ -674,14 +777,31 @@ function openSettings(tab){
     el.appendChild(file);el.appendChild(preview);
     el.appendChild(h('div',{class:'acts',style:'justify-content:flex-start'},[btnOver,btnMerge]));
   }
+  function googleTab(el){
+    el.appendChild(h('div',{class:'sect'},['Google Calendar (읽기 전용)']));
+    if(!googleClientId()){el.appendChild(h('p',{class:'hint'},['config.js 에 GOOGLE_CLIENT_ID 를 넣으면 연결할 수 있어요.']));return}
+    const st=G.status;
+    if(st==='on'){
+      el.appendChild(h('div',{class:'frow'},[h('span',null,['연결됨: ',h('b',null,[G.email||'(이메일 확인 불가)'])])]));
+      el.appendChild(h('p',{class:'hint'},[G.loading?'이벤트를 가져오는 중…':G.syncedAt?`마지막 조회 ${pad(G.syncedAt.getHours())}:${pad(G.syncedAt.getMinutes())} · 이벤트 ${G.events.length}개 (표시 중인 달 ±1개월)`:'월간·주간 뷰를 열면 이벤트를 가져와요.']));
+      el.appendChild(h('div',{class:'frow'},[h('button',{onclick:()=>{G.anchor=null;render();drawPane()}},['새로고침']),h('button',{class:'danger',onclick:googleDisconnect},['연결 해제'])]));
+    }else if(st==='connecting'){
+      el.appendChild(h('p',{class:'hint'},['연결 중… 팝업에서 계정을 선택하세요.']));
+    }else{
+      if(st==='expired')el.appendChild(h('div',{class:'cfbox'},['토큰이 만료됐어요. 다시 연결하면 이어서 볼 수 있어요.']));
+      el.appendChild(h('div',{class:'frow'},[h('button',{class:'primary',onclick:googleConnect},[st==='expired'?'다시 연결':'Google 연결'])]));
+      if(G.error)el.appendChild(h('p',{class:'hint danger'},[G.error]));
+    }
+    el.appendChild(h('p',{class:'hint'},['primary 캘린더의 이벤트를 표시 중인 달 ±1개월 범위로 읽어 월간·주간 뷰에 점선 테두리로 보여줘요. 활성 루틴과 겹치면 경고 점이 붙어요. 토큰은 메모리에만 두고 저장하지 않아서 새로고침하면 다시 연결해야 해요.']));
+  }
   const md=h('div',{class:'md settings',role:'dialog','aria-label':'설정'},[
     h('div',{class:'shead'},[h('h3',null,['설정']),h('button',{class:'quiet',title:'닫기',onclick:()=>close()},['닫기'])]),
     h('div',{class:'sbody'},[tabs,pane])
   ]);
-  drawTabs();drawPane();
+  drawTabs();drawPane();onGoogleChange=drawPane;
   ov.appendChild(md);document.body.appendChild(ov);
   const onKey=(e)=>{if(e.key==='Escape')close()};document.addEventListener('keydown',onKey);
-  function close(){ov.remove();document.removeEventListener('keydown',onKey)}
+  function close(){ov.remove();document.removeEventListener('keydown',onKey);onGoogleChange=null}
 }
 
 /* toast */

@@ -5,8 +5,9 @@
 ## 스택
 
 - 바닐라 JS (ES2015+), 프레임워크·번들러·빌드 도구 없음
-- 파일 3개: `index.html`(마크업), `styles.css`(스타일), `app.js`(전체 로직, IIFE 하나)
+- 파일: `index.html`(마크업), `styles.css`(스타일), `app.js`(전체 로직, IIFE 하나), `config.js`(공개 설정: Google 클라이언트 ID)
 - 저장소는 `localStorage` 한 키뿐. 서버·백엔드 없음
+- Google Calendar 읽기 연동(선택): `config.js` 의 `var GOOGLE_CLIENT_ID` + Google Identity Services 토큰 클라이언트 + Calendar API v3 를 브라우저에서 직접 호출. GIS 스크립트는 연결을 시도할 때만 로드
 - `manifest.json` + `icon.svg` 로 PWA(standalone) 설치 가능. 서비스 워커는 없음
 - 폰트는 시스템 폰트 스택(-apple-system / Segoe UI / Apple SD Gothic Neo / Malgun Gothic …). 외부 CDN 없음
 - UI는 iOS 느낌: `styles.css` 상단의 토큰으로 관리. 사이드바·상단바·모달·토스트·라벨 팝오버는 반투명 유리(`--glass`, backdrop-filter), 배경은 그라데이션. 캘린더 격자·표·루틴/약속 블록은 불투명(`--panel`, `--grid-line`) — 페이지 색 구분이 기능이라 투명도를 주지 않는다. 라이트/다크는 `prefers-color-scheme` 과 `:root[data-theme]` 둘 다 지원
@@ -78,7 +79,7 @@
 | `dayStart` | number | 주간 뷰·편집 그리드가 보여줄 시작 시(0~23). 없으면 6 |
 | `dayEnd` | number | 끝 시(1~24, `dayStart` 보다 커야 함). 없으면 24. 범위 밖 루틴은 잘려 보이거나(일부) 그리드에서 안 보이지만(전부 밖) 데이터·표는 그대로 |
 
-저장값에 없는 설정 키는 `cfg(key)` 가 `SETTINGS_DEFAULTS` 로 채워 읽는다. 설정 모달(`openSettings(tab)`, 상단바 ⚙ 설정)은 좌측 탭 일반(테마·주 시작 요일·시간 범위) / 약속(기본 시작·길이) / 백업 으로 나뉘고, 값은 바꾸는 즉시 `save()`+`render()` 된다(저장 버튼 없음).
+저장값에 없는 설정 키는 `cfg(key)` 가 `SETTINGS_DEFAULTS` 로 채워 읽는다. 설정 모달(`openSettings(tab)`, 상단바 ⚙ 설정)은 좌측 탭 일반(테마·주 시작 요일·시간 범위) / 약속(기본 시작·길이) / 구글(연결·해제) / 백업 으로 나뉘고, 값은 바꾸는 즉시 `save()`+`render()` 된다(저장 버튼 없음).
 
 `load()` 는 저장값에 `pages` 와 `events` 가 있으면 그대로 쓰고, 아니면 빈 상태로 시작한다. 마이그레이션 로직은 없다.
 
@@ -103,6 +104,17 @@
   - 이름 확정(Enter/blur/드래그 전 settle)은 형제 전체의 이름을 바꾼다. 시간은 각자 독립이라 표·드래그로 한 요일 시간을 바꾸면 그 블록은 형제에서 빠진다(체크 해제로 보임)
   - ✕ 삭제는 현재 블록만
 
+## 구글 캘린더 (읽기 전용)
+
+- 설정 모달 구글 탭: `Google 연결` → GIS 팝업(스코프 `calendar.readonly`) → 토큰을 `G.token`(메모리)에만 둔다. **localStorage 저장 금지.** 새로고침하면 `off` 로 돌아가 다시 연결해야 한다. `연결 해제` 는 토큰 revoke + 구글 이벤트만 제거(로컬 데이터 그대로)
+- 상태 `G.status`: `off` | `connecting` | `on` | `expired`. API 가 401 을 주거나 `expires_in` 이 지나면 `expired` 로 바꾸고 이벤트를 비운 뒤 탭에 "다시 연결" 을 보여준다
+- 계정 이메일은 `calendars/primary` 의 `id` 로 얻는다(추가 스코프 없음)
+- 조회 범위: 표시 중인 달(월간은 `view.ym`, 주간은 주 시작일의 달) ±1개월 = `[전달 1일, 다다음달 1일)`. `ensureGoogleEvents(ym)` 이 같은 달이면 캐시를 쓰고 달이 바뀌면 다시 조회하며, 끝나면 `render()`
+- `toLocalEvent()` 가 구글 이벤트를 로컬 약속 모양으로 바꾼다(`id:'g:…'`, `google:true`, `allDay`). 종일은 `end.date` exclusive 라 하루 뺀다. 자정을 넘는 시간 이벤트는 시작한 날 24:00 까지로 자른다. `cancelled` 는 버린다
+- 표시: `indexEvents()` 가 로컬 약속과 구글 이벤트를 함께 날짜별로 묶는다(종일 먼저). 월간은 `.ev.g`(점선), 종일은 `.ev.g.allday` 한 줄. 주간은 `.blk.evb.g`(점선 테두리), 종일은 헤더 아래 `.wad` 줄. 클릭하면 "구글에서 편집" 안내 토스트만 (`openEvent` 초입에서 가드)
+- 충돌: 시간 있는 구글 이벤트는 로컬 약속과 같은 규칙(`eventConflicts`)으로 활성 루틴과 검사해 경고 점·경고색. 종일 이벤트는 검사하지 않는다
+- 범위 밖: 쓰기, 다른 캘린더 선택, 반복 이벤트 편집
+
 ## 백업 (JSON 내보내기/가져오기)
 
 - 설정 모달(상단바 ⚙ 설정, 모든 뷰) 의 백업 탭. 내보내기는 `routine-calendar-YYYY-MM-DD.json` 다운로드, 가져오기는 파일 선택 → 미리보기(페이지·루틴·약속 수) → 덮어쓰기 / 합치기
@@ -114,7 +126,7 @@
 
 세 섹션으로 나뉜 IIFE 하나. 더 쪼개지 말 것.
 
-1. **상태 · 충돌 로직**: 상수(`KEY`, `DAYS`, `PCOL`), 유틸(`toMin`, `fromMin`, `ymd`, `wd`, `overlap`…), `load`/`save`, `applyTheme`, 설정 기본값(`SETTINGS_DEFAULTS`, `cfg`, `dayOrder`, `weekStartOf`), 백업 검증·합치기(`validateBackup`, `mergeBackup`), `view` 상태, `activeItems`/`eventConflicts`/`pageConflicts`
+1. **상태 · 충돌 로직**: 상수(`KEY`, `DAYS`, `PCOL`), 유틸(`toMin`, `fromMin`, `ymd`, `wd`, `overlap`…), `load`/`save`, `applyTheme`, 설정 기본값(`SETTINGS_DEFAULTS`, `cfg`, `dayOrder`, `weekStartOf`), 백업 검증·합치기(`validateBackup`, `mergeBackup`), 구글 연동(`G`, `googleConnect`/`googleDisconnect`, `ensureGoogleEvents`, `toLocalEvent`), `view` 상태, `activeItems`/`eventConflicts`/`pageConflicts`
 2. **렌더링**: `render()` 가 `#app` 을 통째로 다시 그린다. `h()` 로 DOM 생성. 사이드바, 월간, 주간, 페이지 편집기, 드래그 그리드, 라벨 편집기
    - 주간 뷰 겹침 배치(`layoutOverlaps`): 같은 요일에서 겹치는 루틴 블록은 이어져 겹치는 묶음별로 열을 배정해 폭을 n등분(구글 캘린더 방식). 3열 이상이면 라벨을 빼고 title 툴팁만. 겹치지 않는 블록은 기본 폭. 약속 블록은 대상 아님
    - 편집 그리드 블록 조작(`renderEditGrid`): 본체 드래그=이동(요일 간 이동 가능), 상단/하단 6px 핸들(`.rs`)=시작/끝 조절. 30분 스냅, 최소 30분, 06:00~24:00 안으로 클램프. 5px 미만 움직임은 클릭(이름 편집기). 드래그 중엔 시간 텍스트만 바꾸고 놓을 때 `save()`+`render()`. 블록을 누르면 열려 있던 이름 편집기는 `settleLabelEditor()` 로 렌더 없이 확정한다 (드래그 도중 재렌더 방지)

@@ -125,6 +125,9 @@ input:focus,select:focus,button:focus-visible{outline:2px solid var(--accent);ou
 .ev .cf{width:6px;height:6px;border-radius:50%;background:var(--warn);flex:none}
 .ev .t{color:var(--muted);flex:none}
 .ev .ti{overflow:hidden;text-overflow:ellipsis}
+/* 구글 이벤트: 점선 테두리로 로컬 약속과 구분. 종일은 날짜 상단 한 줄 */
+.ev.g{background:transparent;border:1px dashed var(--muted);padding-top:1px;padding-bottom:1px}
+.ev.g.allday{background:var(--field);border-style:dashed;justify-content:center;font-weight:500}
 
 /* ---------- 주간 (불투명 격자·블록) ---------- */
 .wwrap{overflow:auto}
@@ -140,6 +143,10 @@ input:focus,select:focus,button:focus-visible{outline:2px solid var(--accent);ou
 .blk .l{font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .blk.evb{background:transparent;color:var(--ink);border:1.5px solid var(--ink);opacity:1;left:auto;width:calc(100% - 6px);z-index:2;background:var(--panel)}
 .blk.evb.cf{border-color:var(--warn);color:var(--warn)}
+.blk.evb.g{border-style:dashed}
+.wgrid .wad{padding:3px 4px;border-bottom:1px solid var(--grid-line);border-left:1px solid var(--grid-line);min-height:24px;font-size:11px}
+.wgrid .wad.lab{border-left:0;color:var(--muted);text-align:right;padding-right:6px;font-size:11px}
+.wgrid .wad .ev{margin:1px 0}
 .legend{display:flex;flex-wrap:wrap;gap:8px;margin:0 0 10px;font-size:12px;color:var(--muted)}
 .legend span{display:inline-flex;align-items:center;gap:6px;padding:3px 10px;border-radius:999px;background:var(--glass);border:1px solid var(--glass-line)}
 .legend i{width:10px;height:10px;border-radius:3px;display:inline-block}
