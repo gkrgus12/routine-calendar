@@ -31,7 +31,8 @@ function applyTheme(){const t=S.settings.theme;if(t==='light'||t==='dark')docume
 applyTheme();
 // 설정 기본값. 저장값에 없는 키는 기본값으로 읽는다(cfg). weekStart: 'mon'|'sun' (표시 순서만 바뀌고 데이터의 day 는 항상 0=월…6=일),
 // dayStart/dayEnd: 주간 뷰·편집 그리드가 보여줄 시간 범위(시). 범위 밖 루틴은 잘려 보일 뿐 데이터는 그대로
-const SETTINGS_DEFAULTS={defaultStart:'10:00',defaultDur:60,theme:'system',weekStart:'mon',dayStart:6,dayEnd:24,googleKeepLogin:true,routineAlpha:22,eventColor:0};
+const SETTINGS_DEFAULTS={defaultStart:'10:00',defaultDur:60,theme:'system',weekStart:'mon',dayStart:6,dayEnd:24,googleKeepLogin:true,routineAlpha:22,eventColor:0,hourHeight:'fit'};
+// hourHeight: 'fit'(그리드 영역 높이 ÷ 표시 시간 수, 최소 32px) 또는 고정 px(24~80). 세 그리드(편집·주간·일간) 공통. CSS 변수 --px 로 적용
 // routineAlpha: 일간·주간 루틴 블록과 편집 그리드 '다른 페이지 루틴'의 투명도(%). eventColor: 약속 색 팔레트(--e0..--e5) 인덱스
 const cfg=k=>S.settings[k]===undefined?SETTINGS_DEFAULTS[k]:S.settings[k];
 const dayOrder=()=>cfg('weekStart')==='sun'?[6,0,1,2,3,4,5]:[0,1,2,3,4,5,6]; // 요일 표시 순서
@@ -90,6 +91,7 @@ function validateBackup(obj){
     if(st.googleKeepLogin!==undefined){if(typeof st.googleKeepLogin!=='boolean')throw new Error('settings: googleKeepLogin 은 true/false 여야 해요');settings.googleKeepLogin=st.googleKeepLogin}
     if(st.routineAlpha!==undefined){if(!Number.isInteger(st.routineAlpha)||st.routineAlpha<5||st.routineAlpha>100)throw new Error('settings: routineAlpha 는 5~100 정수여야 해요');settings.routineAlpha=st.routineAlpha}
     if(st.eventColor!==undefined){if(!Number.isInteger(st.eventColor)||st.eventColor<0||st.eventColor>5)throw new Error('settings: eventColor 는 0~5 정수여야 해요');settings.eventColor=st.eventColor}
+    if(st.hourHeight!==undefined){if(!(st.hourHeight==='fit'||(Number.isInteger(st.hourHeight)&&st.hourHeight>=24&&st.hourHeight<=80)))throw new Error("settings: hourHeight 는 'fit' 또는 24~80 정수여야 해요");settings.hourHeight=st.hourHeight}
     if(st.dayStart!==undefined||st.dayEnd!==undefined){
       const a=st.dayStart===undefined?SETTINGS_DEFAULTS.dayStart:st.dayStart,b=st.dayEnd===undefined?SETTINGS_DEFAULTS.dayEnd:st.dayEnd;
       if(!Number.isInteger(a)||!Number.isInteger(b)||a<0||b>24||a>=b)throw new Error('settings: dayStart/dayEnd 는 0~24 정수이고 dayStart < dayEnd 여야 해요');
@@ -325,6 +327,7 @@ function render(){
   app.innerHTML='';
   app.appendChild(renderSide());
   app.appendChild(renderMain());
+  fitGrids(); // 시간당 높이(--px) 적용: DOM 이 붙은 뒤 실제 높이를 재서 계산
 }
 function h(tag,attrs,children){
   const el=document.createElement(tag);
@@ -360,6 +363,22 @@ function blockStyle(p,label,withInk){
   const s2=Math.min(1,Math.max(.12,s+ds)),l2=Math.min(.82,Math.max(.18,l+dir*dl));
   return `background:hsl(${hh.toFixed(1)} ${(s2*100).toFixed(1)}% ${(l2*100).toFixed(1)}%)`+(withInk!==false&&l2>.62?';color:#14181d':'');
 }
+
+// 시간당 높이(--px) 적용. 'fit' 이면 그리드 영역(래퍼 시작 ~ .body 아래)에 표시 시간 수가 스크롤 없이 들어가도록 계산(최소 32px, 그 밑이면 세로 스크롤),
+// 고정이면 설정 px. 세로 좌표가 전부 calc(var(--px) * …) 라서 값만 바꾸면 블록·눈금이 따라온다. 창 크기가 바뀌면 다시 계산
+function hourPx(grid){
+  const hh=cfg('hourHeight');const hours=Number(grid.dataset.hours)||18;
+  if(hh!=='fit')return Math.min(80,Math.max(24,Number(hh)||44));
+  const body=grid.closest('.body'),wrap=grid.parentElement;
+  if(!body)return 44;
+  const bodyR=body.getBoundingClientRect(),wrapR=wrap.getBoundingClientRect();
+  const relTop=wrapR.top-bodyR.top+body.scrollTop; // 래퍼의 body 안 위치
+  const avail=body.clientHeight-relTop-parseFloat(getComputedStyle(body).paddingBottom||'0')-parseFloat(getComputedStyle(wrap).marginBottom||'0');
+  const tcol=grid.querySelector('.tcol');const headerH=tcol?tcol.getBoundingClientRect().top-grid.getBoundingClientRect().top:0;
+  return Math.max(32,Math.floor((avail-headerH-2)/hours));
+}
+function fitGrids(){document.querySelectorAll('.wgrid,.egrid').forEach(grid=>grid.style.setProperty('--px',hourPx(grid)+'px'))}
+let fitT=null;window.addEventListener('resize',()=>{clearTimeout(fitT);fitT=setTimeout(fitGrids,50)}); // 창 크기 변경 시 다시 계산 (짧게 디바운스)
 
 // iOS 세그먼트 컨트롤 (상단바 뷰 전환과 설정 모달에서 공용)
 function segControl(name,options,value,onPick){const el=h('div',{class:'seg',role:'group','aria-label':name});options.forEach(([k,label])=>el.appendChild(h('button',{class:value===k?'sel':'','aria-pressed':value===k?'true':'false',onclick:()=>onPick(k)},[label])));return el}
@@ -511,10 +530,12 @@ function timeGridBody(dates){
   act.forEach(p=>lg.appendChild(h('span',null,[h('i',{style:'background:'+PCOL[p.color%PCOL.length]}),p.name])));
   lg.appendChild(h('span',null,[h('i',{style:eventStyle()}),'약속']));
   body.appendChild(lg);
-  const H0=cfg('dayStart'),H1=cfg('dayEnd'),PX=44,SLOT=30;const SPX=PX*SLOT/60;const height=(H1-H0)*PX;const nslots=(H1-H0)*60/SLOT;
+  const H0=cfg('dayStart'),H1=cfg('dayEnd'),SLOT=30;const hours=H1-H0;const nslots=hours*60/SLOT;
+  const cy=hr=>`calc(var(--px) * ${hr})`;const height=cy(hours); // 세로 좌표는 시간당 높이 --px 기준 (fitGrids 가 정함)
   const n=dates.length;
   const wrap=h('div',{class:'wwrap'});
-  const grid=h('div',{class:'wgrid'+(n===1?' dgrid':''),style:`grid-template-columns:48px repeat(${n},1fr)`});
+  const grid=h('div',{class:'wgrid'+(n===1?' dgrid':''),style:`grid-template-columns:48px repeat(${n},minmax(0,1fr))`,'data-hours':hours});
+  const PXv=()=>parseFloat(getComputedStyle(grid).getPropertyValue('--px'))||44; // 드래그 픽셀 계산용 현재 시간당 px
   grid.appendChild(h('div',{class:'whd'},['']));
   dates.forEach(d=>grid.appendChild(h('div',{class:'whd'+(ymd(d)===today?' today':'')},[`${DAYS[wd(d)]} ${d.getDate()}`])));
   const evIdx=indexEvents();
@@ -524,12 +545,12 @@ function timeGridBody(dates){
     grid.appendChild(h('div',{class:'wad lab'},['종일']));
     adWeek.forEach(list=>grid.appendChild(h('div',{class:'wad'},list.map(ev=>h('div',{class:'ev allday',style:eventStyle(),'data-src':ev.google?'g':'l',title:ev.title,onclick:()=>openEvent(ev)},[h('span',{class:'ti'},[ev.title])])))));
   }
-  const tc=h('div',{class:'tcol first',style:'height:'+height+'px'});
-  for(let hr=H0;hr<H1;hr++)tc.appendChild(h('div',{class:'hrlab',style:'top:'+((hr-H0)*PX)+'px'},[pad(hr)+':00'])); // 시간 축 열에는 가로선 없이 라벨만
+  const tc=h('div',{class:'tcol first',style:'height:'+height});
+  for(let hr=H0;hr<H1;hr++)tc.appendChild(h('div',{class:'hrlab',style:'top:'+cy(hr-H0)},[pad(hr)+':00'])); // 시간 축 열에는 가로선 없이 라벨만
   grid.appendChild(tc);
   dates.forEach((d,i)=>{
-    const col=h('div',{class:'tcol',style:'height:'+height+'px'});
-    for(let hr=H0;hr<=H1;hr++)col.appendChild(h('div',{class:'hrline',style:'top:'+((hr-H0)*PX)+'px'}));
+    const col=h('div',{class:'tcol',style:'height:'+height});
+    for(let hr=H0;hr<=H1;hr++)col.appendChild(h('div',{class:'hrline',style:'top:'+cy(hr-H0)}));
     const blocks=[];
     const dow=wd(d);
     act.forEach(p=>p.items.filter(it=>it.day===dow&&it.start&&it.end).forEach(it=>{
@@ -541,7 +562,7 @@ function timeGridBody(dates){
       const {col:c,n}=lay[k];
       // 겹치는 묶음은 폭을 n등분해 나란히. 겹치지 않으면(n=1) 기본 left/right 그대로. 3개 이상 겹치면 라벨 생략, title 툴팁만
       const split=n>1?`;right:auto;left:calc(3px + (100% - 6px) * ${c} / ${n});width:calc((100% - 6px) / ${n} - ${c<n-1?2:0}px)`:'';
-      col.appendChild(h('div',{class:'blk rt',style:`top:${(s-H0*60)/60*PX}px;height:${(e-s)/60*PX-2}px;${blockStyle(p,it.label)}${split}`,title:`${p.name} · ${it.start}–${it.end} ${it.label||''}`},[n>=3?null:h('div',{class:'l'},[it.label||p.name])]));
+      col.appendChild(h('div',{class:'blk rt',style:`top:${cy((s-H0*60)/60)};height:calc(var(--px) * ${(e-s)/60} - 2px);${blockStyle(p,it.label)}${split}`,title:`${p.name} · ${it.start}–${it.end} ${it.label||''}`},[n>=3?null:h('div',{class:'l'},[it.label||p.name])]));
     });
     (evIdx[ymd(d)]||[]).forEach(ev=>{
       if(ev.allDay)return; // 종일은 위 줄에
@@ -549,12 +570,12 @@ function timeGridBody(dates){
       const cf=eventConflicts(ev).some(c=>c.date===ymd(d));
       const tmp=!ev.google&&G.status!=='on';
       // 약속 블록은 pointerdown 을 막아 열(드래그 생성)로 안 가게 하고, 클릭하면 편집
-      col.appendChild(h('div',{class:'blk evb'+(cf?' cf':''),'data-src':ev.google?'g':'l',style:`top:${(s-H0*60)/60*PX}px;height:${(e-s)/60*PX-2}px;${eventStyle()}`,title:ev.title+(cf?' · 활성 루틴과 겹침':''),onpointerdown:e=>e.stopPropagation(),onclick:()=>openEvent(ev)},[h('div',{class:'l'},[(tmp?'임시 · ':'')+(ev.title||'(제목 없음)')])]));
+      col.appendChild(h('div',{class:'blk evb'+(cf?' cf':''),'data-src':ev.google?'g':'l',style:`top:${cy((s-H0*60)/60)};height:calc(var(--px) * ${(e-s)/60} - 2px);${eventStyle()}`,title:ev.title+(cf?' · 활성 루틴과 겹침':''),onpointerdown:e=>e.stopPropagation(),onclick:()=>openEvent(ev)},[h('div',{class:'l'},[(tmp?'임시 · ':'')+(ev.title||'(제목 없음)')])]));
     });
     // 빈 시간(또는 배경인 루틴 블록 위) 드래그 → 약속 생성. 편집 그리드와 같은 30분 스냅·고스트. 5px 미만 움직임은 클릭 = 기본 길이
     let drag=null,ghost=null;
-    const slotAt=ev=>{const r=col.getBoundingClientRect();return Math.min(nslots-1,Math.max(0,Math.floor((ev.clientY-r.top)/SPX)))};
-    const paint=()=>{const a=Math.min(drag.s,drag.e),b=Math.max(drag.s,drag.e)+1;ghost.style.top=(a*SPX)+'px';ghost.style.height=((b-a)*SPX-2)+'px';ghost.textContent='';ghost.appendChild(h('div',{class:'l'},[fromMin(H0*60+a*SLOT)+'–'+fromMin(H0*60+b*SLOT)]))};
+    const slotAt=ev=>{const r=col.getBoundingClientRect();return Math.min(nslots-1,Math.max(0,Math.floor((ev.clientY-r.top)/(PXv()*SLOT/60))))};
+    const paint=()=>{const SPX=PXv()*SLOT/60;const a=Math.min(drag.s,drag.e),b=Math.max(drag.s,drag.e)+1;ghost.style.top=(a*SPX)+'px';ghost.style.height=((b-a)*SPX-2)+'px';ghost.textContent='';ghost.appendChild(h('div',{class:'l'},[fromMin(H0*60+a*SLOT)+'–'+fromMin(H0*60+b*SLOT)]))};
     col.addEventListener('pointerdown',ev=>{
       if(ev.button!==0&&ev.pointerType==='mouse')return;
       drag={s:slotAt(ev),e:slotAt(ev),x0:ev.clientX,y0:ev.clientY,moved:false};col.setPointerCapture(ev.pointerId);
@@ -647,13 +668,15 @@ function renderPage(main){
 /* edit grid: drag to paint routines */
 let pendingEdit=null; // {itemId,isNew} — opened after render
 function renderEditGrid(p){
-  const H0=cfg('dayStart'),H1=cfg('dayEnd'),PX=40,SLOT=30;const SPX=PX*SLOT/60;const height=(H1-H0)*PX;const nslots=(H1-H0)*60/SLOT;
+  const H0=cfg('dayStart'),H1=cfg('dayEnd'),SLOT=30;const hours=H1-H0;const nslots=hours*60/SLOT;
+  const cy=hr=>`calc(var(--px) * ${hr})`;const height=cy(hours); // 세로 좌표는 시간당 높이 --px 기준 (fitGrids 가 정함)
   const order=dayOrder();
-  const wrap=h('div',{class:'egwrap'});const grid=h('div',{class:'egrid'});
+  const wrap=h('div',{class:'egwrap'});const grid=h('div',{class:'egrid','data-hours':hours});
+  const PXv=()=>parseFloat(getComputedStyle(grid).getPropertyValue('--px'))||40; // 드래그·리사이즈 픽셀 계산용 현재 시간당 px
   grid.appendChild(h('div',{class:'whd'},['']));
   order.forEach(d=>grid.appendChild(h('div',{class:'whd'},[DAYS[d]])));
-  const tc=h('div',{class:'tcol first',style:'height:'+height+'px'});
-  for(let hr=H0;hr<H1;hr++)tc.appendChild(h('div',{class:'hrlab',style:'top:'+((hr-H0)*PX)+'px'},[pad(hr)+':00'])); // 시간 축 열에는 가로선 없이 라벨만
+  const tc=h('div',{class:'tcol first',style:'height:'+height});
+  for(let hr=H0;hr<H1;hr++)tc.appendChild(h('div',{class:'hrlab',style:'top:'+cy(hr-H0)},[pad(hr)+':00'])); // 시간 축 열에는 가로선 없이 라벨만
   grid.appendChild(tc);
   const col=PCOL[p.color%PCOL.length];
   const others=activeItems(p.id);
@@ -665,23 +688,23 @@ function renderEditGrid(p){
   const cols=[]; // 요일 컬럼 엘리먼트 (블록을 다른 요일로 옮길 때 참조)
   const dayAt=x=>{for(const d of order){if(x<cols[d].getBoundingClientRect().right)return d}return order[6]};
   for(const day of order){
-    const c=h('div',{class:'tcol',style:'height:'+height+'px','data-day':day});cols[day]=c;
-    for(let hr=H0;hr<=H1;hr++){c.appendChild(h('div',{class:'hrline',style:'top:'+((hr-H0)*PX)+'px'}));if(hr<H1)c.appendChild(h('div',{class:'hrline half',style:'top:'+((hr-H0)*PX+PX/2)+'px'}))}
+    const c=h('div',{class:'tcol',style:'height:'+height,'data-day':day});cols[day]=c;
+    for(let hr=H0;hr<=H1;hr++){c.appendChild(h('div',{class:'hrline',style:'top:'+cy(hr-H0)}));if(hr<H1)c.appendChild(h('div',{class:'hrline half',style:'top:'+cy(hr-H0+.5)}))}
     others.filter(it=>it.day===day).forEach(it=>{
       const s=Math.max(toMin(it.start),H0*60),e=Math.min(toMin(it.end),H1*60);if(e<=s)return;
-      c.appendChild(h('div',{class:'blk other',style:`top:${(s-H0*60)/60*PX}px;height:${(e-s)/60*PX-2}px;${blockStyle(it.page,it.label,false)}`},[h('div',{class:'l'},[it.page.name])]));
+      c.appendChild(h('div',{class:'blk other',style:`top:${cy((s-H0*60)/60)};height:calc(var(--px) * ${(e-s)/60} - 2px);${blockStyle(it.page,it.label,false)}`},[h('div',{class:'l'},[it.page.name])]));
     });
     p.items.filter(it=>it.day===day&&it.start&&it.end).forEach(it=>{
       const s=Math.max(toMin(it.start),H0*60),e=Math.min(toMin(it.end),H1*60);if(e<=s)return;
       const lbl=h('div',{class:'l'},[it.label||'(이름 없음)']);
       const isOvl=ovl.has(it.id);
-      const blk=h('div',{class:'blk'+(isOvl?' ovl':''),'data-id':it.id,style:`top:${(s-H0*60)/60*PX}px;height:${(e-s)/60*PX-2}px;${blockStyle(p,it.label)}`,title:(isOvl?'같은 페이지 루틴과 겹침 · ':'')+`${it.start}–${it.end} ${it.label||''}`},[lbl,h('div',{class:'rs t'}),h('div',{class:'rs b'})]);
+      const blk=h('div',{class:'blk'+(isOvl?' ovl':''),'data-id':it.id,style:`top:${cy((s-H0*60)/60)};height:calc(var(--px) * ${(e-s)/60} - 2px);${blockStyle(p,it.label)}`,title:(isOvl?'같은 페이지 루틴과 겹침 · ':'')+`${it.start}–${it.end} ${it.label||''}`},[lbl,h('div',{class:'rs t'}),h('div',{class:'rs b'})]);
       // 블록 조작: 본체 드래그=이동(다른 요일로도), 상단/하단 6px(.rs)=시작/끝 시간 조절. 30분 스냅, 최소 30분.
       // 5px 미만 움직임으로 놓으면 클릭 → 이름 편집기. 드래그 중엔 시간 텍스트를 실시간 표시하고 놓을 때 저장.
       let d=null;
       const paintBlk=()=>{
         const s=Math.max(d.s,H0*60),e=Math.min(d.e,H1*60);
-        blk.style.top=((s-H0*60)/60*PX)+'px';blk.style.height=Math.max(0,(e-s)/60*PX-2)+'px';
+        const PX=PXv();blk.style.top=((s-H0*60)/60*PX)+'px';blk.style.height=Math.max(0,(e-s)/60*PX-2)+'px';
         blk.style.transform=d.day===d.day0?'':`translateX(${cols[d.day].offsetLeft-cols[d.day0].offsetLeft}px)`;
         lbl.textContent=fromMin(d.s)+'–'+fromMin(d.e);
       };
@@ -698,7 +721,7 @@ function renderEditGrid(p){
         if(!d)return;
         const dx=ev.clientX-d.x0,dy=ev.clientY-d.y0;
         if(!d.moved){if(Math.hypot(dx,dy)<5)return;d.moved=true;blk.classList.add('dragging')}
-        const dm=Math.round(dy/SPX)*SLOT;
+        const dm=Math.round(dy/(PXv()*SLOT/60))*SLOT;
         if(d.mode==='move'){
           const dur=d.e0-d.s0;
           d.s=Math.min(Math.max(d.s0+dm,H0*60),Math.max(H0*60,H1*60-dur));d.e=Math.min(d.s+dur,H1*60);d.day=dayAt(ev.clientX);
@@ -719,7 +742,7 @@ function renderEditGrid(p){
     });
     // drag to create
     let drag=null,ghost=null;
-    const slotAt=(ev)=>{const r=c.getBoundingClientRect();const y=ev.clientY-r.top;return Math.min(nslots-1,Math.max(0,Math.floor(y/SPX)))};
+    const slotAt=(ev)=>{const r=c.getBoundingClientRect();const y=ev.clientY-r.top;return Math.min(nslots-1,Math.max(0,Math.floor(y/(PXv()*SLOT/60))))};
     c.addEventListener('pointerdown',ev=>{
       if(ev.button!==0&&ev.pointerType==='mouse')return;
       closeLabelEditor();
@@ -734,7 +757,7 @@ function renderEditGrid(p){
       pendingEdit={itemId:it.id,isNew:true};render();
     };
     c.addEventListener('pointerup',finish);c.addEventListener('pointercancel',()=>{drag=null;ghost&&ghost.remove();ghost=null});
-    function paint(){const a=Math.min(drag.s,drag.e),b=Math.max(drag.s,drag.e)+1;ghost.style.top=(a*SPX)+'px';ghost.style.height=((b-a)*SPX-2)+'px';ghost.innerHTML='<div class="l">'+fromMin(H0*60+a*SLOT)+'–'+fromMin(H0*60+b*SLOT)+'</div>'}
+    function paint(){const SPX=PXv()*SLOT/60;const a=Math.min(drag.s,drag.e),b=Math.max(drag.s,drag.e)+1;ghost.style.top=(a*SPX)+'px';ghost.style.height=((b-a)*SPX-2)+'px';ghost.innerHTML='<div class="l">'+fromMin(H0*60+a*SLOT)+'–'+fromMin(H0*60+b*SLOT)+'</div>'}
     grid.appendChild(c);
   }
   wrap.appendChild(grid);
@@ -915,6 +938,17 @@ function openSettings(tab){
       onchange:(e)=>apply(()=>{S.settings.routineAlpha=Number(e.target.value)})});
     el.appendChild(h('div',{class:'frow'},[rng,pct]));
     el.appendChild(h('p',{class:'hint'},['일간·주간 뷰의 루틴 블록과 편집 그리드의 다른 페이지 루틴이 이만큼 불투명하게 보여요. 약속이 루틴 위에서 뚜렷하게 구분되도록 낮게 두는 게 기본이에요.']));
+    el.appendChild(h('div',{class:'sect'},['시간당 높이']));
+    const hh=cfg('hourHeight');const fixed=hh!=='fit';
+    el.appendChild(h('div',{class:'frow'},[seg('시간당 높이',[['fit','높이 맞춤'],['fixed','고정']],fixed?'fixed':'fit',k=>apply(()=>{S.settings.hourHeight=k==='fit'?'fit':(fixed?hh:44)}))]));
+    if(fixed){
+      const pxl=h('span',{class:'pct'},[hh+'px']);
+      const hr=h('input',{type:'range',min:'24',max:'80',step:'2',value:hh,'aria-label':'시간당 높이(px)',
+        oninput:(e)=>{S.settings.hourHeight=Number(e.target.value);pxl.textContent=e.target.value+'px';fitGrids()},
+        onchange:(e)=>apply(()=>{S.settings.hourHeight=Number(e.target.value)})});
+      el.appendChild(h('div',{class:'frow'},[hr,pxl]));
+    }
+    el.appendChild(h('p',{class:'hint'},[fixed?'편집·주간·일간 그리드의 한 시간 높이를 고정해요.':'그리드 영역의 높이에 맞춰 하루가 스크롤 없이 들어가도록 한 시간 높이를 계산해요 (최소 32px, 그 밑이면 세로 스크롤). 창 크기가 바뀌면 다시 계산해요.']));
   }
   function eventTab(el){
     el.appendChild(h('div',{class:'sect'},['새 약속 기본값']));

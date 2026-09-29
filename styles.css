@@ -21,6 +21,7 @@
   --e0:#C2185B; --e1:#C62828; --e2:#3949AB; --e3:#546E7A; --e4:#6D4C41; --e5:#1F2933;
   --r-sm:8px; --r-md:12px; --r-lg:18px; --r-xl:22px;
   --blur:blur(24px) saturate(180%);
+  --px:44px; /* 시간당 높이. fitGrids() 가 그리드마다 덮어쓴다 */
   box-sizing:border-box; padding-top:env(safe-area-inset-top,0px); padding-bottom:env(safe-area-inset-bottom,0px);
 }
 /* ---------- 토큰: 다크 ---------- */
@@ -120,9 +121,9 @@ input:focus,select:focus,button:focus-visible{outline:2px solid var(--accent);ou
 .body{flex:1;min-height:0;overflow:auto;padding:2px 2px 6px}
 
 /* ---------- 월간 (불투명 격자) ---------- */
-.mgrid{display:grid;grid-template-columns:repeat(7,1fr);gap:1px;background:var(--grid-line);border:1px solid var(--grid-line);border-radius:var(--r-lg);overflow:hidden;min-width:560px}
+.mgrid{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:1px;background:var(--grid-line);border:1px solid var(--grid-line);border-radius:var(--r-lg);overflow:hidden;min-width:560px}
 .mgrid .hd{background:var(--panel);padding:8px 10px;color:var(--muted);font-size:12px;font-weight:600}
-.mgrid .day{background:var(--panel);min-height:92px;padding:6px 6px 8px;cursor:pointer;position:relative;transition:background .12s}
+.mgrid .day{background:var(--panel);min-height:92px;min-width:0;padding:6px 6px 8px;cursor:pointer;position:relative;transition:background .12s}
 .mgrid .day:hover{background:var(--panel-hover)}
 .mgrid .day.out{color:var(--muted);background:var(--panel-dim)}
 .mgrid .day.out .n{opacity:.6}
@@ -133,19 +134,19 @@ input:focus,select:focus,button:focus-visible{outline:2px solid var(--accent);ou
 .ev:hover{filter:brightness(1.08)}
 .ev .cf{width:6px;height:6px;border-radius:50%;background:var(--warn);flex:none}
 .ev .t{opacity:.85;flex:none}
-.ev .ti{overflow:hidden;text-overflow:ellipsis}
+.ev .ti{overflow:hidden;text-overflow:ellipsis;min-width:0} /* 시간(.t)은 유지, 제목만 말줄임 */
 /* 종일은 날짜 상단 한 줄. 구글/로컬 구분 없이 같은 약속 색으로 채움 */
 .ev.allday{justify-content:center;font-weight:500}
 .ev .tag{flex:none;font-size:10px;line-height:1.4;padding:0 4px;border-radius:4px;background:rgba(255,255,255,.85);color:#7a4a00;font-weight:600} /* 미연결 상태의 로컬 임시 약속 */
 
 /* ---------- 주간 (불투명 격자·블록) ---------- */
 .wwrap{overflow:auto}
-.wgrid{display:grid;grid-template-columns:48px repeat(7,1fr);min-width:720px;border:1px solid var(--grid-line);border-radius:var(--r-lg);overflow:hidden;background:var(--panel)}
-.wgrid .whd{padding:8px 4px;text-align:center;color:var(--muted);font-size:12px;font-weight:600;border-bottom:1px solid var(--grid-line);border-left:1px solid var(--grid-line)}
+.wgrid{display:grid;grid-template-columns:48px repeat(7,minmax(0,1fr));min-width:580px; /* 열당 76px 미만이면 가로 스크롤 (48 + 7×76). 900px 창에서 사이드바를 빼고도 폭에 맞는 값 */border:1px solid var(--grid-line);border-radius:var(--r-lg);overflow:hidden;background:var(--panel)}
+.wgrid .whd{min-width:0;padding:8px 4px;text-align:center;color:var(--muted);font-size:12px;font-weight:600;border-bottom:1px solid var(--grid-line);border-left:1px solid var(--grid-line)}
 .wgrid .whd:first-child{border-left:0;border-bottom:0} /* 시간 축 열에는 가로선 없음 */
 .wgrid.dgrid{min-width:0} /* 일간: 컬럼 하나 */
 .wgrid .whd.today{color:var(--accent);font-weight:700}
-.wgrid .tcol{position:relative;border-left:1px solid var(--grid-line);touch-action:none;cursor:crosshair} /* 빈 시간 드래그로 약속 생성 */
+.wgrid .tcol{position:relative;min-width:0;border-left:1px solid var(--grid-line);touch-action:none;cursor:crosshair} /* 빈 시간 드래그로 약속 생성 */
 .wgrid .tcol.first{cursor:default}
 .wgrid .blk.rt{opacity:var(--routine-alpha,.22);cursor:default} /* 루틴은 배경 */
 .wgrid .tcol.first{border-left:0}
@@ -157,7 +158,7 @@ input:focus,select:focus,button:focus-visible{outline:2px solid var(--accent);ou
 .blk.evb:hover{filter:brightness(1.08)}
 .blk.evb.cf{box-shadow:inset 0 0 0 2px var(--warn)} /* 활성 루틴과 겹침 */
 .blk.evb.ghost{opacity:.6;pointer-events:none;border:1.5px dashed #fff}
-.wgrid .wad{padding:3px 4px;border-bottom:1px solid var(--grid-line);border-left:1px solid var(--grid-line);min-height:24px;font-size:11px}
+.wgrid .wad{min-width:0;padding:3px 4px;border-bottom:1px solid var(--grid-line);border-left:1px solid var(--grid-line);min-height:24px;font-size:11px}
 .wgrid .wad.lab{border-left:0;border-bottom:0;color:var(--muted);text-align:right;padding-right:6px;font-size:11px}
 .wgrid .wad .ev{margin:1px 0}
 .legend{display:flex;flex-wrap:wrap;gap:8px;margin:0 0 10px;font-size:12px;color:var(--muted)}
@@ -166,10 +167,10 @@ input:focus,select:focus,button:focus-visible{outline:2px solid var(--accent);ou
 
 /* ---------- 편집 그리드 (드래그로 그리기) ---------- */
 .egwrap{overflow:auto;margin-bottom:14px}
-.egrid{position:relative;display:grid;grid-template-columns:44px repeat(7,1fr);min-width:640px;border:1px solid var(--grid-line);border-radius:var(--r-lg);overflow:hidden;background:var(--panel);user-select:none;-webkit-user-select:none}
-.egrid .whd{padding:8px 4px;text-align:center;color:var(--muted);font-size:12px;font-weight:600;border-bottom:1px solid var(--grid-line);border-left:1px solid var(--grid-line)}
+.egrid{position:relative;display:grid;grid-template-columns:44px repeat(7,minmax(0,1fr));min-width:576px; /* 44 + 7×76 */border:1px solid var(--grid-line);border-radius:var(--r-lg);overflow:hidden;background:var(--panel);user-select:none;-webkit-user-select:none}
+.egrid .whd{min-width:0;padding:8px 4px;text-align:center;color:var(--muted);font-size:12px;font-weight:600;border-bottom:1px solid var(--grid-line);border-left:1px solid var(--grid-line)}
 .egrid .whd:first-child{border-left:0;border-bottom:0} /* 시간 축 열에는 가로선 없음 */
-.egrid .tcol{position:relative;border-left:1px solid var(--grid-line);touch-action:none;cursor:crosshair}
+.egrid .tcol{position:relative;min-width:0;border-left:1px solid var(--grid-line);touch-action:none;cursor:crosshair}
 .egrid .tcol.first{border-left:0;cursor:default}
 .egrid .hrline.half{border-top-style:dashed;opacity:.3}
 .egrid .blk{cursor:pointer}
@@ -194,7 +195,7 @@ input:focus,select:focus,button:focus-visible{outline:2px solid var(--accent);ou
 .pedit .sub{color:var(--muted);font-size:12px;margin:0 0 6px}
 
 /* ---------- 페이지 편집기 ---------- */
-.pedit{max-width:760px}
+.pedit{max-width:none} /* 편집 그리드도 주간처럼 창 너비에 맞춰 늘어난다 */
 .pedit .row{display:flex;gap:8px;align-items:center;margin-bottom:6px;flex-wrap:wrap}
 .pedit .row input[type=text]{flex:1;min-width:120px}
 .pedit table{width:100%;border-collapse:separate;border-spacing:0;margin-top:8px;background:var(--panel);border:1px solid var(--grid-line);border-radius:var(--r-md);overflow:hidden}
