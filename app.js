@@ -31,7 +31,8 @@ function applyTheme(){const t=S.settings.theme;if(t==='light'||t==='dark')docume
 applyTheme();
 // 설정 기본값. 저장값에 없는 키는 기본값으로 읽는다(cfg). weekStart: 'mon'|'sun' (표시 순서만 바뀌고 데이터의 day 는 항상 0=월…6=일),
 // dayStart/dayEnd: 주간 뷰·편집 그리드가 보여줄 시간 범위(시). 범위 밖 루틴은 잘려 보일 뿐 데이터는 그대로
-const SETTINGS_DEFAULTS={defaultStart:'10:00',defaultDur:60,theme:'system',weekStart:'mon',dayStart:6,dayEnd:24,googleKeepLogin:true};
+const SETTINGS_DEFAULTS={defaultStart:'10:00',defaultDur:60,theme:'system',weekStart:'mon',dayStart:6,dayEnd:24,googleKeepLogin:true,routineAlpha:22,eventColor:0};
+// routineAlpha: 일간·주간 루틴 블록과 편집 그리드 '다른 페이지 루틴'의 투명도(%). eventColor: 약속 색 팔레트(--e0..--e5) 인덱스
 const cfg=k=>S.settings[k]===undefined?SETTINGS_DEFAULTS[k]:S.settings[k];
 const dayOrder=()=>cfg('weekStart')==='sun'?[6,0,1,2,3,4,5]:[0,1,2,3,4,5,6]; // 요일 표시 순서
 const dayPos=d=>dayOrder().indexOf(d);
@@ -87,6 +88,8 @@ function validateBackup(obj){
     if(['system','light','dark'].includes(st.theme))settings.theme=st.theme;
     if(st.weekStart!==undefined){if(!['mon','sun'].includes(st.weekStart))throw new Error('settings: weekStart 는 mon 또는 sun 이에요');settings.weekStart=st.weekStart}
     if(st.googleKeepLogin!==undefined){if(typeof st.googleKeepLogin!=='boolean')throw new Error('settings: googleKeepLogin 은 true/false 여야 해요');settings.googleKeepLogin=st.googleKeepLogin}
+    if(st.routineAlpha!==undefined){if(!Number.isInteger(st.routineAlpha)||st.routineAlpha<5||st.routineAlpha>100)throw new Error('settings: routineAlpha 는 5~100 정수여야 해요');settings.routineAlpha=st.routineAlpha}
+    if(st.eventColor!==undefined){if(!Number.isInteger(st.eventColor)||st.eventColor<0||st.eventColor>5)throw new Error('settings: eventColor 는 0~5 정수여야 해요');settings.eventColor=st.eventColor}
     if(st.dayStart!==undefined||st.dayEnd!==undefined){
       const a=st.dayStart===undefined?SETTINGS_DEFAULTS.dayStart:st.dayStart,b=st.dayEnd===undefined?SETTINGS_DEFAULTS.dayEnd:st.dayEnd;
       if(!Number.isInteger(a)||!Number.isInteger(b)||a<0||b>24||a>=b)throw new Error('settings: dayStart/dayEnd 는 0~24 정수이고 dayStart < dayEnd 여야 해요');
@@ -320,7 +323,16 @@ const hexToHsl=hex=>{const m=/^#?([0-9a-f]{6})$/i.exec(hex||'');if(!m)return nul
 // 기본색이 밝은 팔레트(다크 테마, l>.5)에서는 방향을 뒤집어 어두워지는 쪽으로 간다 (클램프로 단계가 뭉치지 않게)
 const LABEL_VARIANTS=[[.08,-.16],[-.08,-.08],[.08,.08],[-.08,.16],[.10,.24],[-.12,.32]];
 let PBASE=[]; // 현재 테마의 --p0..--p5 실제 색(HSL). render() 마다 갱신하므로 테마가 바뀌면 변형색도 따라감
-function refreshPalette(){const cs=getComputedStyle(document.documentElement);PBASE=PCOL.map((_,i)=>hexToHsl(cs.getPropertyValue('--p'+i).trim()))}
+const ECOL=['var(--e0)','var(--e1)','var(--e2)','var(--e3)','var(--e4)','var(--e5)']; // 약속 색 팔레트 (루틴 팔레트와 겹치지 않게 고른 6색)
+let EBASE=[];
+function refreshPalette(){
+  const cs=getComputedStyle(document.documentElement);
+  PBASE=PCOL.map((_,i)=>hexToHsl(cs.getPropertyValue('--p'+i).trim()));
+  EBASE=ECOL.map((_,i)=>hexToHsl(cs.getPropertyValue('--e'+i).trim()));
+  document.documentElement.style.setProperty('--routine-alpha',String(cfg('routineAlpha')/100)); // 일간·주간 루틴 블록 + 편집 그리드 other 블록 투명도
+}
+// 약속 블록·칩 인라인 스타일: 설정의 약속 색 하나로 채우고, 밝은 색이면 글자를 어둡게
+function eventStyle(){const ci=cfg('eventColor')%ECOL.length;const hsl=EBASE[ci];return 'background:'+ECOL[ci]+(hsl&&hsl[2]>.62?';color:#14181d':';color:#fff')}
 // 블록 인라인 스타일(배경, 필요하면 글자색). colorByLabel 이 켜진 페이지는 라벨 해시로 고른 변형색, 이름 없으면 페이지 기본색
 function blockStyle(p,label,withInk){
   const ci=p.color%PCOL.length,base=PCOL[ci],k=labelKey(label);
@@ -415,8 +427,8 @@ function renderMonth(main){
     (evByDate[key]||[]).forEach(ev=>{
       const cf=!ev.allDay&&eventConflicts(ev).some(c=>c.date===key);
       // 구글 이벤트는 점선 테두리(.g), 종일 이벤트는 날짜 상단 한 줄(.allday, 정렬로 맨 위)
-      const tmp=!ev.google&&G.status==='on'; // 연결 중인데 로컬에 남은 약속 = 임시
-      cell.appendChild(h('div',{class:'ev'+(ev.google?' g':'')+(ev.allDay?' allday':'')+(tmp?' tmp':''),title:(ev.google?(ev.recurring?'[구글·반복] ':'[구글] '):tmp?'[임시(로컬)] ':'')+ev.title,onclick:(e)=>{e.stopPropagation();openEvent(ev)}},[
+      const tmp=!ev.google&&G.status!=='on'; // 미연결 상태의 로컬 약속 = 임시 배지 (구글/로컬 구분 표기는 그 외에 없음)
+      cell.appendChild(h('div',{class:'ev'+(ev.allDay?' allday':'')+(tmp?' tmp':''),style:eventStyle(),'data-src':ev.google?'g':'l',title:ev.title,onclick:(e)=>{e.stopPropagation();openEvent(ev)}},[
         cf?h('span',{class:'cf',title:'활성 루틴과 겹침'}):null,
         tmp?h('span',{class:'tag'},['임시']):null,
         ev.allDay?null:h('span',{class:'t'},[ev.startTime]),h('span',{class:'ti'},[ev.title||'(제목 없음)'])
@@ -471,30 +483,27 @@ function renderDay(main){
 }
 function shiftDay(n){const d=parse(view.day);d.setDate(d.getDate()+n);view.day=ymd(d);render()}
 
-// 시간축 그리드 본문 (주간 7열 / 일간 1열 공용): 범례 + 종일 줄 + 활성 루틴 블록 + 약속 블록
+// 시간축 그리드 본문 (주간 7열 / 일간 1열 공용): 범례 + 종일 줄 + 활성 루틴 블록(흐림, 배경) + 약속 블록(채움) + 빈 시간 드래그로 약속 생성
 function timeGridBody(dates){
   const body=h('div',{class:'body'});
   const act=S.pages.filter(p=>p.active);
-  if(!act.length){body.appendChild(h('div',{class:'empty'},['활성화된 루틴 페이지가 없어요. 왼쪽 목록에서 스위치를 켜면 여기 표시됩니다.']));return body}
+  if(!act.length)body.appendChild(h('div',{class:'notice'},['활성화된 루틴 페이지가 없어요. 왼쪽 목록에서 스위치를 켜면 루틴이 함께 보여요.'])); // 그리드는 항상 표시
   const lg=h('div',{class:'legend'});
   act.forEach(p=>lg.appendChild(h('span',null,[h('i',{style:'background:'+PCOL[p.color%PCOL.length]}),p.name])));
-  if(G.status==='on'){
-    lg.appendChild(h('span',null,[h('i',{style:'border:1.5px dashed var(--ink);background:transparent'}),'구글 약속']));
-    if(S.events.length)lg.appendChild(h('span',null,[h('i',{style:'border:1.5px dotted var(--ink);background:transparent'}),'임시(로컬)']));
-  }else lg.appendChild(h('span',null,[h('i',{style:'border:1.5px solid var(--ink);background:transparent'}),'약속']));
+  lg.appendChild(h('span',null,[h('i',{style:eventStyle()}),'약속']));
   body.appendChild(lg);
-  const H0=cfg('dayStart'),H1=cfg('dayEnd'),PX=44;const height=(H1-H0)*PX;
+  const H0=cfg('dayStart'),H1=cfg('dayEnd'),PX=44,SLOT=30;const SPX=PX*SLOT/60;const height=(H1-H0)*PX;const nslots=(H1-H0)*60/SLOT;
   const n=dates.length;
   const wrap=h('div',{class:'wwrap'});
   const grid=h('div',{class:'wgrid'+(n===1?' dgrid':''),style:`grid-template-columns:48px repeat(${n},1fr)`});
   grid.appendChild(h('div',{class:'whd'},['']));
   dates.forEach(d=>grid.appendChild(h('div',{class:'whd'+(ymd(d)===today?' today':'')},[`${DAYS[wd(d)]} ${d.getDate()}`])));
   const evIdx=indexEvents();
-  // 종일(구글) 이벤트 줄: 하나라도 있으면 헤더 아래에 한 줄 추가
+  // 종일 이벤트 줄: 하나라도 있으면 헤더 아래에 한 줄 추가
   const adWeek=dates.map(d=>(evIdx[ymd(d)]||[]).filter(ev=>ev.allDay));
   if(adWeek.some(a=>a.length)){
     grid.appendChild(h('div',{class:'wad lab'},['종일']));
-    adWeek.forEach(list=>grid.appendChild(h('div',{class:'wad'},list.map(ev=>h('div',{class:'ev g allday',title:'[구글] '+ev.title,onclick:()=>openEvent(ev)},[h('span',{class:'ti'},[ev.title])])))));
+    adWeek.forEach(list=>grid.appendChild(h('div',{class:'wad'},list.map(ev=>h('div',{class:'ev allday',style:eventStyle(),'data-src':ev.google?'g':'l',title:ev.title,onclick:()=>openEvent(ev)},[h('span',{class:'ti'},[ev.title])])))));
   }
   const tc=h('div',{class:'tcol first',style:'height:'+height+'px'});
   for(let hr=H0;hr<H1;hr++)tc.appendChild(h('div',{class:'hrlab',style:'top:'+((hr-H0)*PX)+'px'},[pad(hr)+':00'])); // 시간 축 열에는 가로선 없이 라벨만
@@ -513,15 +522,34 @@ function timeGridBody(dates){
       const {col:c,n}=lay[k];
       // 겹치는 묶음은 폭을 n등분해 나란히. 겹치지 않으면(n=1) 기본 left/right 그대로. 3개 이상 겹치면 라벨 생략, title 툴팁만
       const split=n>1?`;right:auto;left:calc(3px + (100% - 6px) * ${c} / ${n});width:calc((100% - 6px) / ${n} - ${c<n-1?2:0}px)`:'';
-      col.appendChild(h('div',{class:'blk',style:`top:${(s-H0*60)/60*PX}px;height:${(e-s)/60*PX-2}px;${blockStyle(p,it.label)}${split}`,title:`${p.name} · ${it.start}–${it.end} ${it.label||''}`},[n>=3?null:h('div',{class:'l'},[it.label||p.name])]));
+      col.appendChild(h('div',{class:'blk rt',style:`top:${(s-H0*60)/60*PX}px;height:${(e-s)/60*PX-2}px;${blockStyle(p,it.label)}${split}`,title:`${p.name} · ${it.start}–${it.end} ${it.label||''}`},[n>=3?null:h('div',{class:'l'},[it.label||p.name])]));
     });
     (evIdx[ymd(d)]||[]).forEach(ev=>{
       if(ev.allDay)return; // 종일은 위 줄에
       const s=Math.max(toMin(ev.startTime),H0*60),e=Math.min(toMin(ev.endTime),H1*60);if(e<=s)return;
       const cf=eventConflicts(ev).some(c=>c.date===ymd(d));
-      const tmp=!ev.google&&G.status==='on';
-      col.appendChild(h('div',{class:'blk evb'+(cf?' cf':'')+(ev.google?' g':'')+(tmp?' tmp':''),style:`top:${(s-H0*60)/60*PX}px;height:${(e-s)/60*PX-2}px`,title:(ev.google?(ev.recurring?'[구글·반복] ':'[구글] '):tmp?'[임시(로컬)] ':'')+ev.title,onclick:()=>openEvent(ev)},[h('div',{class:'l'},[(tmp?'임시 · ':'')+(ev.title||'(제목 없음)')])]));
+      const tmp=!ev.google&&G.status!=='on';
+      // 약속 블록은 pointerdown 을 막아 열(드래그 생성)로 안 가게 하고, 클릭하면 편집
+      col.appendChild(h('div',{class:'blk evb'+(cf?' cf':''),'data-src':ev.google?'g':'l',style:`top:${(s-H0*60)/60*PX}px;height:${(e-s)/60*PX-2}px;${eventStyle()}`,title:ev.title+(cf?' · 활성 루틴과 겹침':''),onpointerdown:e=>e.stopPropagation(),onclick:()=>openEvent(ev)},[h('div',{class:'l'},[(tmp?'임시 · ':'')+(ev.title||'(제목 없음)')])]));
     });
+    // 빈 시간(또는 배경인 루틴 블록 위) 드래그 → 약속 생성. 편집 그리드와 같은 30분 스냅·고스트. 5px 미만 움직임은 클릭 = 기본 길이
+    let drag=null,ghost=null;
+    const slotAt=ev=>{const r=col.getBoundingClientRect();return Math.min(nslots-1,Math.max(0,Math.floor((ev.clientY-r.top)/SPX)))};
+    const paint=()=>{const a=Math.min(drag.s,drag.e),b=Math.max(drag.s,drag.e)+1;ghost.style.top=(a*SPX)+'px';ghost.style.height=((b-a)*SPX-2)+'px';ghost.textContent='';ghost.appendChild(h('div',{class:'l'},[fromMin(H0*60+a*SLOT)+'–'+fromMin(H0*60+b*SLOT)]))};
+    col.addEventListener('pointerdown',ev=>{
+      if(ev.button!==0&&ev.pointerType==='mouse')return;
+      drag={s:slotAt(ev),e:slotAt(ev),x0:ev.clientX,y0:ev.clientY,moved:false};col.setPointerCapture(ev.pointerId);
+      ghost=h('div',{class:'blk evb ghost',style:eventStyle()});col.appendChild(ghost);paint();
+    });
+    col.addEventListener('pointermove',ev=>{if(!drag)return;if(!drag.moved&&Math.hypot(ev.clientX-drag.x0,ev.clientY-drag.y0)>=5)drag.moved=true;drag.e=slotAt(ev);paint()});
+    const finish=()=>{
+      if(!drag)return;const dg=drag;drag=null;ghost&&ghost.remove();ghost=null;
+      const a=Math.min(dg.s,dg.e),b=Math.max(dg.s,dg.e)+1;
+      const st=H0*60+a*SLOT;
+      const en=Math.min(dg.moved?H0*60+b*SLOT:st+cfg('defaultDur'),1439); // time 입력은 24:00 을 못 보여주므로 23:59 까지
+      openEvent(null,ymd(d),{startTime:fromMin(st),endTime:fromMin(Math.max(en,st+1))});
+    };
+    col.addEventListener('pointerup',finish);col.addEventListener('pointercancel',()=>{drag=null;ghost&&ghost.remove();ghost=null});
     grid.appendChild(col);
   });
   wrap.appendChild(grid);body.appendChild(wrap);
@@ -749,12 +777,13 @@ function openLabelEditor(p,it,isNew,grid,opts){
    ========================================================= */
 
 /* event modal */
-function openEvent(ev,dateKey){
+function openEvent(ev,dateKey,preset){ // preset: 드래그 생성 시 {startTime,endTime}
   // 연결돼 있으면 새 약속과 구글 이벤트는 구글 캘린더(primary)에 직접 쓴다. 로컬 약속은 미연결 상태에서만 새로 만들 수 있고, 남아 있는 로컬 약속은 "임시" 로 편집·삭제만 된다
   const isNew=!ev;
   const gmode=G.status==='on'&&(isNew||!!(ev&&ev.google));
   const raw=ev&&ev.google?ev.raw:null;
-  const draft=raw?draftFromGoogle(raw):ev?{...ev}:{id:uid(),title:'',startDate:dateKey||today,endDate:dateKey||today,startTime:cfg('defaultStart'),endTime:fromMin(Math.min(toMin(cfg('defaultStart'))+cfg('defaultDur'),1439))};
+  const pst=(preset&&preset.startTime)||cfg('defaultStart');
+  const draft=raw?draftFromGoogle(raw):ev?{...ev}:{id:uid(),title:'',startDate:dateKey||today,endDate:dateKey||today,startTime:pst,endTime:(preset&&preset.endTime)||fromMin(Math.min(toMin(pst)+cfg('defaultDur'),1439))};
   let busy=false;
   const ov=h('div',{class:'ov',onclick:(e)=>{if(e.target===ov&&!busy)close()}});
   const cfBox=h('div');
@@ -860,6 +889,13 @@ function openSettings(tab){
     a.addEventListener('change',commit);b.addEventListener('change',commit);
     el.appendChild(h('div',{class:'frow'},[h('label',null,['시작 ',a,' 시']),h('span',{class:'hint',style:'margin:0'},['~']),h('label',null,['끝 ',b,' 시'])]));
     el.appendChild(h('p',{class:'hint'},['주간 뷰와 편집 그리드에 적용돼요. 범위 밖 루틴은 잘려 보이지만 데이터는 그대로예요.']));
+    el.appendChild(h('div',{class:'sect'},['루틴 블록 흐림']));
+    const pct=h('span',{class:'pct'},[cfg('routineAlpha')+'%']);
+    const rng=h('input',{type:'range',min:'5',max:'100',step:'1',value:cfg('routineAlpha'),'aria-label':'루틴 블록 불투명도',
+      oninput:(e)=>{S.settings.routineAlpha=Number(e.target.value);pct.textContent=e.target.value+'%';document.documentElement.style.setProperty('--routine-alpha',String(Number(e.target.value)/100))},
+      onchange:(e)=>apply(()=>{S.settings.routineAlpha=Number(e.target.value)})});
+    el.appendChild(h('div',{class:'frow'},[rng,pct]));
+    el.appendChild(h('p',{class:'hint'},['일간·주간 뷰의 루틴 블록과 편집 그리드의 다른 페이지 루틴이 이만큼 불투명하게 보여요. 약속이 루틴 위에서 뚜렷하게 구분되도록 낮게 두는 게 기본이에요.']));
   }
   function eventTab(el){
     el.appendChild(h('div',{class:'sect'},['새 약속 기본값']));
@@ -868,6 +904,11 @@ function openSettings(tab){
       h('label',null,['기본 길이(분)',h('input',{type:'number',min:'5',step:'5',value:cfg('defaultDur'),onchange:(e)=>apply(()=>{S.settings.defaultDur=Math.max(5,Number(e.target.value)||60)})})]),
     ]));
     el.appendChild(h('p',{class:'hint'},['새 약속을 열 때 이 값으로 채워집니다. 날짜는 클릭한 날이 기본이에요.']));
+    el.appendChild(h('div',{class:'sect'},['약속 색']));
+    const sw=h('div',{class:'swatches'});
+    ECOL.forEach((c,i)=>sw.appendChild(h('button',{class:i===cfg('eventColor')?'sel':'',style:'background:'+c,title:'약속 색 '+(i+1),'aria-pressed':i===cfg('eventColor')?'true':'false',onclick:()=>apply(()=>{S.settings.eventColor=i})})));
+    el.appendChild(h('div',{class:'frow'},[sw]));
+    el.appendChild(h('p',{class:'hint'},['월간·주간·일간의 모든 약속 블록에 한 가지 색으로 적용돼요. 루틴 팔레트와 겹치지 않는 색들이에요.']));
   }
   function backupTab(el){
     const countOf=s=>`페이지 ${s.pages.length}개 (루틴 ${s.pages.reduce((n,p)=>n+p.items.length,0)}개) · 약속 ${s.events.length}개`;
