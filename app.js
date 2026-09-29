@@ -951,7 +951,7 @@ function dismissSheet(ov,md){ // 닫힘: 시트는 아래로 사라지고 딤은
   const m=/translateY\((-?[\d.]+)px\)/.exec(md.style.transform||'');const cur=m?Number(m[1]):0;
   Promise.all([anim(md,{y:[cur,72],opacity:[1,0]},{duration:160,easing:'ease-in',fill:'forwards'}),anim(ov,{opacity:[1,0]},{duration:160,easing:'ease-in',fill:'forwards'})]).then(()=>ov.remove());
 }
-/* ---------- 팝오버 (약속 추가·편집, 데스크톱 폭): 기준점 = 클릭한 블록·버튼 사각형과 클릭/드래그 끝 지점. 오른쪽 → 왼쪽 → (둘 다 안 들어가면) 지점 기준으로 두고, 세로는 기준점 중앙에 맞춘 뒤 화면 안으로 민다. 폭 360, 딤 없음, Esc·바깥 클릭으로 닫힘 ---------- */
+/* ---------- 팝오버 (약속 추가·편집, 데스크톱 폭): 기준점 = 클릭한 블록·버튼 사각형과 클릭/드래그 끝 지점. 오른쪽 → 왼쪽 → (둘 다 안 들어가면) 지점 기준으로 두고, 팝오버의 위쪽 모서리(오른쪽에 뜨면 왼쪽 위, 왼쪽에 뜨면 오른쪽 위)를 기준점 상단에 맞춰 아래로 펼친다. 아래가 부족하면 위로 밀어 화면 안에. 폭 360, 화살표·딤 없음, Esc·바깥 클릭으로 닫힘 ---------- */
 const POP_GAP=10,POP_M=12;
 const usePopover=()=>innerWidth>720; // 모바일 폭은 기존 하단 시트
 function anchorRects(anchor){ // 후보 사각형 순서: 요소 사각형 → 지점(1×1)
@@ -963,7 +963,6 @@ function anchorRects(anchor){ // 후보 사각형 순서: 요소 사각형 → �
 }
 function openPopover(ov,md,anchor){
   ov.classList.add('clear');md.classList.add('pop');
-  const arrow=h('i',{class:'arrow','aria-hidden':'true'});md.appendChild(arrow);
   ov.appendChild(md);document.body.appendChild(ov);
   const rects=anchorRects(anchor);
   if(!rects.length){const cx=innerWidth/2,cy=innerHeight/2;rects.push({left:cx,right:cx,top:cy,bottom:cy})} // 기준점 없으면 화면 가운데
@@ -975,12 +974,9 @@ function openPopover(ov,md,anchor){
       if(r.left-POP_GAP-w>=POP_M){left=r.left-POP_GAP-w;side='left';a=r;break}
     }
     if(left===null){a=rects[rects.length-1];side='right';left=Math.min(vw-POP_M-w,Math.max(POP_M,a.right+POP_GAP))}
-    const cy=(a.top+a.bottom)/2;
-    const top=Math.max(POP_M,Math.min(vh-POP_M-hh,cy-hh/2)); // 기준점 세로 중앙에 맞추고, 아래·위가 부족하면 밀어서 화면 안에
-    const ay=Math.max(18,Math.min(hh-18,cy-top)); // 화살표는 기준점을 가리키되 모서리 안쪽에
+    const top=Math.max(POP_M,Math.min(vh-POP_M-hh,a.top)); // 위쪽 모서리를 기준점 상단(블록 위쪽·클릭 지점)에 맞춰 아래로 펼치고, 아래가 부족하면 위로 밀어 화면 안에
     md.style.left=left+'px';md.style.top=top+'px';md.dataset.side=side;
-    arrow.style.top=(ay-6)+'px';
-    md.style.transformOrigin=(side==='right'?0:w)+'px '+ay+'px'; // 기준점 쪽에서 커지며 등장
+    md.style.transformOrigin=(side==='right'?0:w)+'px 0px'; // 기준점에 닿은 위쪽 모서리에서 커지며 등장
   };
   place();
   anim(md,{scale:[.9,1],opacity:[0,1]},{duration:120,bounce:.2});

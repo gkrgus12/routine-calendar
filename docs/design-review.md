@@ -72,15 +72,16 @@
 
 ## 3차: 데스크톱 잔손질 (약속 팝오버 · 고정 화살표)
 
-- 약속 추가·편집은 데스크톱 폭에서 하단 시트 대신 **팝오버**: 기준점(클릭한 블록/칩/버튼, 또는 드래그를 놓은 지점) 오른쪽, 자리가 없으면 왼쪽, 아래가 부족하면 위로 밀어 화면 안에. 폭 360, 기준점을 가리키는 화살표, 딤 없음, 기준점 쪽에서 scale .9→1 스프링 120ms. Esc·바깥 클릭으로 닫힘. 설정 모달은 시트 그대로
+- 약속 추가·편집은 데스크톱 폭에서 하단 시트 대신 **팝오버**: 기준점(클릭한 블록/칩/버튼, 또는 드래그를 놓은 지점) 오른쪽, 자리가 없으면 왼쪽. 팝오버의 위쪽 모서리를 기준점 상단(블록 위쪽·클릭 지점)에 맞춰 아래로 펼치고, 아래가 부족하면 위로 밀어 화면 안에. 폭 360, 화살표·딤 없음, 위쪽 모서리에서 scale .9→1 스프링 120ms. Esc·바깥 클릭으로 닫힘. 설정 모달은 시트 그대로
 - 상단바는 `[오늘/이번 주][‹ ›] 제목` — ‹ › 한 쌍이 왼쪽에 고정돼 제목 길이(12월 28일 – 1월 3일 등)와 무관
 
 | 확인 | 그림 |
 |---|---|
 | 오른쪽 끝·아래쪽 끝(일요일 22시) 블록 → 왼쪽으로, 위로 밀려 잘리지 않음 | [popover-edge-light](shots/popover-edge-light.png) |
-| 주간 드래그 생성 → 놓은 지점 옆 | [popover-drag-dark](shots/popover-drag-dark.png) |
+| 주간 드래그 생성 → 놓은 지점이 팝오버 왼쪽 위 모서리 | [popover-drag-dark](shots/popover-drag-dark.png) |
+| 월간 날짜 칸 클릭 → 클릭 지점 높이에 팝오버 상단 | [popover-cell-light](shots/popover-cell-light.png) |
 | 일간 폭 전체 블록 → 클릭 지점 기준 | [popover-day-light](shots/popover-day-light.png) |
-| 등장 프레임 0·40·80·120ms | [motion-popover-light](shots/motion-popover-light.png) |
+| 등장 프레임 0·40·80·120ms (위쪽 모서리에서 커짐) | [motion-popover-light](shots/motion-popover-light.png) |
 | 상단바: 이번 주 / 12월 28일 – 1월 3일 / 12월 31일 (목) / 월간 — 화살표 자리 동일 | [bar-nav](shots/bar-nav.png) |
 
 ## 4차: 상단바 재배치 (macOS 캘린더 기준)
