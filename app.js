@@ -43,6 +43,9 @@ const VIEW_KEY='routine-cal-view'; // 마지막 캘린더 뷰(day|week|month). U
 const lastCalView=()=>{try{const v=localStorage.getItem(VIEW_KEY);return ['day','week','month'].includes(v)?v:'month'}catch(e){return 'month'}};
 let view={type:lastCalView(),ym:today.slice(0,7),pageId:null,weekStart:weekStartOf(new Date()),day:today};
 function setCalView(t){view.type=t;try{localStorage.setItem(VIEW_KEY,t)}catch(e){}render()}
+// 접힌 띠 펼침 상태: 그 주/그 날/그 페이지(key)에서만 유지되고 다른 곳으로 가면 다시 접힌다
+const expandFor=key=>{if(view.expand&&view.expand.key!==key)view.expand=null;return view.expand||{key,top:false,bottom:false}}; // 다른 주/날/페이지로 가면 접힌 상태로 초기화
+function toggleExpand(key,side){const ex=expandFor(key);view.expand={key,top:ex.top,bottom:ex.bottom};view.expand[side]=!ex[side];render()}
 // 설정의 주 시작 요일(월/일)에 맞춘, d 가 속한 주의 첫날
 function weekStartOf(d){const x=new Date(d);const back=cfg('weekStart')==='sun'?x.getDay():wd(x);x.setDate(x.getDate()-back);x.setHours(0,0,0,0);return x}
 
@@ -254,7 +257,7 @@ function toLocalEvents(it){
   if(ed===sd)return [{...base,id:'g:'+it.id,allDay:false,startDate:sd,endDate:sd,startTime:fromMin(sm),endTime:fromMin(Math.max(em,sm+1))}];
   const out=[];const d=new Date(s.getFullYear(),s.getMonth(),s.getDate());
   for(let i=0;i<62;i++){const k=ymd(d);if(k>ed)break;const st=k===sd?sm:0,en=k===ed?em:1440;
-    if(en>st)out.push({...base,id:'g:'+it.id+':'+k,allDay:false,startDate:k,endDate:k,startTime:fromMin(st),endTime:fromMin(en)});d.setDate(d.getDate()+1)}
+    if(en>st)out.push({...base,id:'g:'+it.id+':'+k,allDay:false,startDate:k,endDate:k,startTime:fromMin(st),endTime:fromMin(en),seg:k===sd?'head':k===ed?'tail':'mid'});d.setDate(d.getDate()+1)}
   return out;
 }
 // 편집 폼 초기값: 구글 이벤트의 실제 시작·끝. <input type=time> 은 24:00 을 못 보여주므로 종일은 00:00~23:59 로, 자정에 끝나면 다음날 00:00 으로 표기(저장 시 같은 시각)
@@ -294,27 +297,34 @@ function activeItems(exceptPageId){
   for(const p of S.pages){ if(!p.active||p.id===exceptPageId)continue; for(const it of p.items){ if(it.start&&it.end)out.push({...it,page:p}); } }
   return out;
 }
-function eventConflicts(ev){
-  const res=[];const items=activeItems();
-  let d=parse(ev.startDate),end=parse(ev.endDate);
-  if(end<d)end=d;
+// 루틴 아이템의 요일별 조각(분). end < start 면 자정을 넘겨 다음 요일 00:00~end 까지 이어진다 (일요일 → 월요일). end == start 는 무시
+function itemSegs(it){
+  if(!it.start||!it.end)return [];
+  const s=toMin(it.start),e=toMin(it.end);
+  if(e>s)return [{day:it.day,s,e,part:'single'}];
+  if(e===s)return [];
+  return [{day:it.day,s,e:1440,part:'head'},{day:(it.day+1)%7,s:0,e,part:'tail'}];
+}
+// 약속의 날짜별 조각(분). 종료일이 시작일 다음 날이고 끝 시간이 시작보다 이르면 자정을 넘긴 하나의 일정(두 조각).
+// 그 외 여러 날 범위는 날짜마다 같은 시간(기존 로컬 모델). 종일은 날짜마다 0~1440
+function eventSegs(ev){
+  const out=[];let d=parse(ev.startDate),end=parse(ev.endDate);if(end<d)end=d;
   const s=toMin(ev.startTime),e=toMin(ev.endTime);
-  for(;d<=end;d.setDate(d.getDate()+1)){
-    const w=wd(d);
-    for(const it of items){
-      if(it.day!==w)continue;
-      if(overlap(s,e,toMin(it.start),toMin(it.end))) res.push({date:ymd(d),item:it});
-    }
-  }
+  const next=new Date(d);next.setDate(next.getDate()+1);
+  if(!ev.allDay&&ymd(end)===ymd(next)&&e<s){out.push({date:ymd(d),s,e:1440,part:'head'});out.push({date:ymd(end),s:0,e,part:'tail'});return out}
+  for(;d<=end;d.setDate(d.getDate()+1))out.push({date:ymd(d),s,e,part:'single'});
+  return out;
+}
+const activeSegs=exceptPageId=>{const out=[];for(const it of activeItems(exceptPageId))for(const sg of itemSegs(it))out.push({...sg,item:it});return out};
+function eventConflicts(ev){ // 약속의 각 조각을 그 날짜 요일의 활성 루틴 조각과 비교 (자정 넘김: 23~24 는 그 요일, 00~01 은 다음 요일)
+  const res=[];const segs=activeSegs();
+  for(const es of eventSegs(ev)){const w=wd(parse(es.date));
+    for(const sg of segs){if(sg.day!==w)continue;if(overlap(es.s,es.e,sg.s,sg.e))res.push({date:es.date,item:sg.item})}}
   return res;
 }
 function pageConflicts(page){
-  const res=[];const others=activeItems(page.id);
-  for(const a of page.items){ if(!a.start||!a.end)continue;
-    for(const b of others){ if(a.day!==b.day)continue;
-      if(overlap(toMin(a.start),toMin(a.end),toMin(b.start),toMin(b.end))) res.push({a,b});
-    }
-  }
+  const res=[];const others=activeSegs(page.id);
+  for(const a of page.items)for(const sa of itemSegs(a))for(const sb of others){if(sa.day!==sb.day)continue;if(overlap(sa.s,sa.e,sb.s,sb.e))res.push({a,b:sb.item})}
   return res;
 }
 
@@ -324,6 +334,7 @@ function pageConflicts(page){
 const app=document.getElementById('app');
 function render(){
   refreshPalette();
+  expandFor(view.type==='week'?'week:'+ymd(weekStartOf(view.weekStart||new Date())):view.type==='day'?'day:'+view.day:view.type==='page'?'page:'+view.pageId:'month'); // 다른 뷰/주/날/페이지로 가면 띠 펼침 초기화
   app.innerHTML='';
   app.appendChild(renderSide());
   app.appendChild(renderMain());
@@ -466,7 +477,7 @@ function renderMonth(main){
       const cf=!ev.allDay&&eventConflicts(ev).some(c=>c.date===key);
       // 구글 이벤트는 점선 테두리(.g), 종일 이벤트는 날짜 상단 한 줄(.allday, 정렬로 맨 위)
       const tmp=!ev.google&&G.status!=='on'; // 미연결 상태의 로컬 약속 = 임시 배지 (구글/로컬 구분 표기는 그 외에 없음)
-      cell.appendChild(h('div',{class:'ev'+(ev.allDay?' allday':'')+(tmp?' tmp':''),style:eventStyle(),'data-src':ev.google?'g':'l',title:ev.title,onclick:(e)=>{e.stopPropagation();openEvent(ev)}},[
+      cell.appendChild(h('div',{class:'ev'+(ev.allDay?' allday':'')+(tmp?' tmp':''),style:eventStyle(),'data-src':ev.google?'g':'l',title:ev.title,onclick:(e)=>{e.stopPropagation();openEvent(ev.src||ev)}},[
         cf?h('span',{class:'cf',title:'활성 루틴과 겹침'}):null,
         tmp?h('span',{class:'tag'},['임시']):null,
         ev.allDay?null:h('span',{class:'t'},[ev.startTime]),h('span',{class:'ti'},[ev.title||'(제목 없음)'])
@@ -478,10 +489,16 @@ function renderMonth(main){
   main.appendChild(body);
 }
 function shiftMonth(n){const [y,m]=view.ym.split('-').map(Number);const d=new Date(y,m-1+n,1);view.ym=d.getFullYear()+'-'+pad(d.getMonth()+1);render()}
-function indexEvents(){ // 로컬 약속 + (연결돼 있으면) 구글 이벤트. 날짜별로 종일 먼저, 그다음 시작 시간순
-  const idx={};
-  for(const ev of [...S.events,...(G.status==='on'?G.events:[])]){ let d=parse(ev.startDate),e=parse(ev.endDate);if(e<d)e=d;
-    for(;d<=e;d.setDate(d.getDate()+1)){(idx[ymd(d)]=idx[ymd(d)]||[]).push(ev)} }
+function indexEvents(){ // 로컬 약속 + (연결돼 있으면) 구글 이벤트 조각을 날짜별로. 종일 먼저, 그다음 시작 시간순
+  const idx={};const push=(k,ev)=>(idx[k]=idx[k]||[]).push(ev);
+  for(const ev of S.events){
+    const segs=eventSegs(ev);
+    if(segs.length===2&&segs[0].part==='head'){ // 자정 넘김: 두 조각, 둘 다 src 로 원본을 가리켜 같은 편집 모달을 연다
+      push(segs[0].date,{...ev,startDate:segs[0].date,endDate:segs[0].date,endTime:'24:00',seg:'head',src:ev});
+      push(segs[1].date,{...ev,startDate:segs[1].date,endDate:segs[1].date,startTime:'00:00',seg:'tail',src:ev});
+    }else for(const sg of segs)push(sg.date,ev);
+  }
+  if(G.status==='on')for(const ev of G.events){let d=parse(ev.startDate),e=parse(ev.endDate);if(e<d)e=d;for(;d<=e;d.setDate(d.getDate()+1))push(ymd(d),ev)}
   for(const k in idx)idx[k].sort((a,b)=>(b.allDay?1:0)-(a.allDay?1:0)||a.startTime.localeCompare(b.startTime));
   return idx;
 }
@@ -500,7 +517,7 @@ function renderWeek(main){
   ]);
   main.appendChild(bar);
   const dates=[];for(let i=0;i<7;i++){const d=new Date(ws);d.setDate(ws.getDate()+i);dates.push(d)}
-  main.appendChild(timeGridBody(dates));
+  main.appendChild(timeGridBody(dates,'week:'+ymd(ws)));
 }
 
 /* day: 주간과 같은 시간축에 컬럼 하나 (드래그 편집 없음) */
@@ -517,12 +534,12 @@ function renderDay(main){
     h('button',{class:'primary',onclick:()=>openEvent(null,view.day)},['+ 약속'])
   ]);
   main.appendChild(bar);
-  main.appendChild(timeGridBody([d]));
+  main.appendChild(timeGridBody([d],'day:'+view.day));
 }
 function shiftDay(n){const d=parse(view.day);d.setDate(d.getDate()+n);view.day=ymd(d);render()}
 
-// 시간축 그리드 본문 (주간 7열 / 일간 1열 공용): 범례 + 종일 줄 + 활성 루틴 블록(흐림, 배경) + 약속 블록(채움) + 빈 시간 드래그로 약속 생성
-function timeGridBody(dates){
+// 시간축 그리드 본문 (주간 7열 / 일간 1열 공용): 범례 + 종일 줄 + 접힌 띠 + 활성 루틴 조각(흐림, 배경) + 약속 조각(채움) + 빈 시간 드래그로 약속 생성
+function timeGridBody(dates,key){
   const body=h('div',{class:'body'});
   const act=S.pages.filter(p=>p.active);
   if(!act.length)body.appendChild(h('div',{class:'notice'},['활성화된 루틴 페이지가 없어요. 왼쪽 목록에서 스위치를 켜면 루틴이 함께 보여요.'])); // 그리드는 항상 표시
@@ -530,7 +547,9 @@ function timeGridBody(dates){
   act.forEach(p=>lg.appendChild(h('span',null,[h('i',{style:'background:'+PCOL[p.color%PCOL.length]}),p.name])));
   lg.appendChild(h('span',null,[h('i',{style:eventStyle()}),'약속']));
   body.appendChild(lg);
-  const H0=cfg('dayStart'),H1=cfg('dayEnd'),SLOT=30;const hours=H1-H0;const nslots=hours*60/SLOT;
+  // 설정 범위 밖 시간은 위아래 띠로 접는다. 펼치면(그 주/그 날에서만) 그쪽 범위가 그리드에 포함된다
+  const base0=cfg('dayStart'),base1=cfg('dayEnd');const ex=expandFor(key);
+  const H0=ex.top?0:base0,H1=ex.bottom?24:base1,SLOT=30;const hours=H1-H0;const nslots=hours*60/SLOT;
   const cy=hr=>`calc(var(--px) * ${hr})`;const height=cy(hours); // 세로 좌표는 시간당 높이 --px 기준 (fitGrids 가 정함)
   const n=dates.length;
   const wrap=h('div',{class:'wwrap'});
@@ -543,8 +562,18 @@ function timeGridBody(dates){
   const adWeek=dates.map(d=>(evIdx[ymd(d)]||[]).filter(ev=>ev.allDay));
   if(adWeek.some(a=>a.length)){
     grid.appendChild(h('div',{class:'wad lab'},['종일']));
-    adWeek.forEach(list=>grid.appendChild(h('div',{class:'wad'},list.map(ev=>h('div',{class:'ev allday',style:eventStyle(),'data-src':ev.google?'g':'l',title:ev.title,onclick:()=>openEvent(ev)},[h('span',{class:'ti'},[ev.title])])))));
+    adWeek.forEach(list=>grid.appendChild(h('div',{class:'wad'},list.map(ev=>h('div',{class:'ev allday',style:eventStyle(),'data-src':ev.google?'g':'l',title:ev.title,onclick:()=>openEvent(ev.src||ev)},[h('span',{class:'ti'},[ev.title])])))));
   }
+  // 접힌 띠: [lo,hi) 시간대에 걸친 루틴·약속 개수를 세서 표시. 아무것도 없으면 아주 얇게
+  const countHidden=(lo,hi)=>{const rt=new Set(),ev=new Set();
+    dates.forEach(d=>{const dow=wd(d);
+      act.forEach(p=>p.items.forEach(it=>itemSegs(it).forEach(sg=>{if(sg.day===dow&&overlap(sg.s,sg.e,lo,hi))rt.add(it.id)})));
+      (evIdx[ymd(d)]||[]).forEach(e=>{if(e.allDay)return;if(overlap(toMin(e.startTime),toMin(e.endTime),lo,hi))ev.add(e.id)})});
+    return {rt:rt.size,ev:ev.size}};
+  const band=(side,lo,hi)=>{const open=ex[side];const c=countHidden(lo*60,hi*60);const empty=!c.rt&&!c.ev;
+    const label=open?`${pad(lo)}–${pad(hi)} 펼침 · 클릭하면 접어요`:(empty?'':`${pad(lo)}–${pad(hi)} · 루틴 ${c.rt} · 약속 ${c.ev}`);
+    return h('div',{class:'band '+side+(open?' open':'')+(empty&&!open?' empty':''),role:'button',title:open?'접기':`${pad(lo)}–${pad(hi)} 펼치기`,onclick:()=>toggleExpand(key,side)},[label])};
+  if(base0>0)grid.appendChild(band('top',0,base0));
   const tc=h('div',{class:'tcol first',style:'height:'+height});
   for(let hr=H0;hr<H1;hr++)tc.appendChild(h('div',{class:'hrlab',style:'top:'+cy(hr-H0)},[pad(hr)+':00'])); // 시간 축 열에는 가로선 없이 라벨만
   grid.appendChild(tc);
@@ -553,24 +582,26 @@ function timeGridBody(dates){
     for(let hr=H0;hr<=H1;hr++)col.appendChild(h('div',{class:'hrline',style:'top:'+cy(hr-H0)}));
     const blocks=[];
     const dow=wd(d);
-    act.forEach(p=>p.items.filter(it=>it.day===dow&&it.start&&it.end).forEach(it=>{
-      const s=Math.max(toMin(it.start),H0*60),e=Math.min(toMin(it.end),H1*60);if(e<=s)return;
-      blocks.push({s,e,it,p});
-    }));
+    act.forEach(p=>p.items.forEach(it=>itemSegs(it).forEach(sg=>{ // 자정 넘김 루틴은 그 요일 하단 + 다음 요일 상단 두 조각
+      if(sg.day!==dow)return;
+      const s=Math.max(sg.s,H0*60),e=Math.min(sg.e,H1*60);if(e<=s)return;
+      blocks.push({s,e,it,p,part:sg.part});
+    })));
     const lay=layoutOverlaps(blocks);
-    blocks.forEach(({s,e,it,p},k)=>{
+    blocks.forEach(({s,e,it,p,part},k)=>{
       const {col:c,n}=lay[k];
       // 겹치는 묶음은 폭을 n등분해 나란히. 겹치지 않으면(n=1) 기본 left/right 그대로. 3개 이상 겹치면 라벨 생략, title 툴팁만
       const split=n>1?`;right:auto;left:calc(3px + (100% - 6px) * ${c} / ${n});width:calc((100% - 6px) / ${n} - ${c<n-1?2:0}px)`:'';
-      col.appendChild(h('div',{class:'blk rt',style:`top:${cy((s-H0*60)/60)};height:calc(var(--px) * ${(e-s)/60} - 2px);${blockStyle(p,it.label)}${split}`,title:`${p.name} · ${it.start}–${it.end} ${it.label||''}`},[n>=3?null:h('div',{class:'l'},[it.label||p.name])]));
+      col.appendChild(h('div',{class:'blk rt'+(part==='head'?' seg-head':part==='tail'?' seg-tail':''),style:`top:${cy((s-H0*60)/60)};height:calc(var(--px) * ${(e-s)/60} - 2px);${blockStyle(p,it.label)}${split}`,title:`${p.name} · ${it.start}–${it.end}${toMin(it.end)<toMin(it.start)?' (다음 날)':''} ${it.label||''}`},[n>=3?null:h('div',{class:'l'},[it.label||p.name])]));
     });
     (evIdx[ymd(d)]||[]).forEach(ev=>{
       if(ev.allDay)return; // 종일은 위 줄에
       const s=Math.max(toMin(ev.startTime),H0*60),e=Math.min(toMin(ev.endTime),H1*60);if(e<=s)return;
       const cf=eventConflicts(ev).some(c=>c.date===ymd(d));
       const tmp=!ev.google&&G.status!=='on';
-      // 약속 블록은 pointerdown 을 막아 열(드래그 생성)로 안 가게 하고, 클릭하면 편집
-      col.appendChild(h('div',{class:'blk evb'+(cf?' cf':''),'data-src':ev.google?'g':'l',style:`top:${cy((s-H0*60)/60)};height:calc(var(--px) * ${(e-s)/60} - 2px);${eventStyle()}`,title:ev.title+(cf?' · 활성 루틴과 겹침':''),onpointerdown:e=>e.stopPropagation(),onclick:()=>openEvent(ev)},[h('div',{class:'l'},[(tmp?'임시 · ':'')+(ev.title||'(제목 없음)')])]));
+      const segCls=ev.seg==='head'?' seg-head':ev.seg==='tail'?' seg-tail':ev.seg==='mid'?' seg-mid':'';
+      // 약속 블록은 pointerdown 을 막아 열(드래그 생성)로 안 가게 하고, 클릭하면 편집 (조각은 원본 src 로)
+      col.appendChild(h('div',{class:'blk evb'+(cf?' cf':'')+segCls,'data-src':ev.google?'g':'l',style:`top:${cy((s-H0*60)/60)};height:calc(var(--px) * ${(e-s)/60} - 2px);${eventStyle()}`,title:ev.title+(cf?' · 활성 루틴과 겹침':''),onpointerdown:e=>e.stopPropagation(),onclick:()=>openEvent(ev.src||ev)},[h('div',{class:'l'},[(tmp?'임시 · ':'')+(ev.title||'(제목 없음)')])]));
     });
     // 빈 시간(또는 배경인 루틴 블록 위) 드래그 → 약속 생성. 편집 그리드와 같은 30분 스냅·고스트. 5px 미만 움직임은 클릭 = 기본 길이
     let drag=null,ghost=null;
@@ -592,6 +623,7 @@ function timeGridBody(dates){
     col.addEventListener('pointerup',finish);col.addEventListener('pointercancel',()=>{drag=null;ghost&&ghost.remove();ghost=null});
     grid.appendChild(col);
   });
+  if(base1<24)grid.appendChild(band('bottom',base1,24));
   wrap.appendChild(grid);body.appendChild(wrap);
   return body;
 }
@@ -640,7 +672,7 @@ function renderPage(main){
   ]));
   ed.appendChild(h('p',{class:'sub',style:'margin-top:8px'},['빈 칸을 드래그하면 루틴이 생겨요 (30분 단위). 블록을 끌면 이동, 위·아래 가장자리를 끌면 시간 조절. 클릭하면 이름 수정·삭제·요일 복제. 흐린 블록은 다른 활성 페이지의 루틴.']));
   ed.appendChild(renderEditGrid(p));
-  ed.appendChild(h('p',{class:'sub'},['목록에서 시간을 정확히 고칠 수 있어요.']));
+  ed.appendChild(h('p',{class:'sub'},['목록에서 시간을 정확히 고칠 수 있어요. 끝 시간을 시작보다 이르게 두면 다음 날까지 이어지는 루틴이 돼요.']));
   const tbl=h('table');
   tbl.appendChild(h('tr',null,[h('th',null,['요일']),h('th',null,['시작']),h('th',null,['끝']),h('th',null,['이름']),h('th',null,[''])]));
   const sorted=[...p.items].sort((a,b)=>dayPos(a.day)-dayPos(b.day)||(a.start||'').localeCompare(b.start||''));
@@ -668,52 +700,67 @@ function renderPage(main){
 /* edit grid: drag to paint routines */
 let pendingEdit=null; // {itemId,isNew} — opened after render
 function renderEditGrid(p){
-  const H0=cfg('dayStart'),H1=cfg('dayEnd'),SLOT=30;const hours=H1-H0;const nslots=hours*60/SLOT;
+  // 설정 범위 밖 시간은 위아래 띠로 접는다 (이 페이지에서만 펼침)
+  const key='page:'+p.id;const base0=cfg('dayStart'),base1=cfg('dayEnd');const ex=expandFor(key);
+  const H0=ex.top?0:base0,H1=ex.bottom?24:base1,SLOT=30;const hours=H1-H0;const nslots=hours*60/SLOT;
   const cy=hr=>`calc(var(--px) * ${hr})`;const height=cy(hours); // 세로 좌표는 시간당 높이 --px 기준 (fitGrids 가 정함)
   const order=dayOrder();
   const wrap=h('div',{class:'egwrap'});const grid=h('div',{class:'egrid','data-hours':hours});
   const PXv=()=>parseFloat(getComputedStyle(grid).getPropertyValue('--px'))||40; // 드래그·리사이즈 픽셀 계산용 현재 시간당 px
   grid.appendChild(h('div',{class:'whd'},['']));
   order.forEach(d=>grid.appendChild(h('div',{class:'whd'},[DAYS[d]])));
+  const countHidden=(lo,hi)=>{const rt=new Set();p.items.forEach(it=>itemSegs(it).forEach(sg=>{if(overlap(sg.s,sg.e,lo,hi))rt.add(it.id)}));return rt.size};
+  const band=(side,lo,hi)=>{const open=ex[side];const n=countHidden(lo*60,hi*60);
+    const label=open?`${pad(lo)}–${pad(hi)} 펼침 · 클릭하면 접어요`:(n?`${pad(lo)}–${pad(hi)} · 루틴 ${n}`:'');
+    return h('div',{class:'band '+side+(open?' open':'')+(!n&&!open?' empty':''),role:'button',title:open?'접기':`${pad(lo)}–${pad(hi)} 펼치기`,onclick:()=>toggleExpand(key,side)},[label])};
+  if(base0>0)grid.appendChild(band('top',0,base0));
   const tc=h('div',{class:'tcol first',style:'height:'+height});
   for(let hr=H0;hr<H1;hr++)tc.appendChild(h('div',{class:'hrlab',style:'top:'+cy(hr-H0)},[pad(hr)+':00'])); // 시간 축 열에는 가로선 없이 라벨만
   grid.appendChild(tc);
   const col=PCOL[p.color%PCOL.length];
   const others=activeItems(p.id);
-  // 같은 페이지 안에서 서로 겹치는 아이템 (경고 테두리 + 툴팁). 충돌 로직(토스트·약속 경고)과는 별개로 표시만 한다
+  // 같은 페이지 안에서 서로 겹치는 아이템 (경고 테두리 + 툴팁). 조각 단위로 비교하므로 자정 넘김도 다음 요일에서 검사된다
   const ovl=new Set();
   const its=p.items.filter(it=>it.start&&it.end);
   for(let a=0;a<its.length;a++)for(let b=a+1;b<its.length;b++){const x=its[a],y=its[b];
-    if(x.day===y.day&&overlap(toMin(x.start),toMin(x.end),toMin(y.start),toMin(y.end))){ovl.add(x.id);ovl.add(y.id)}}
+    if(itemSegs(x).some(sa=>itemSegs(y).some(sb=>sa.day===sb.day&&overlap(sa.s,sa.e,sb.s,sb.e)))){ovl.add(x.id);ovl.add(y.id)}}
   const cols=[]; // 요일 컬럼 엘리먼트 (블록을 다른 요일로 옮길 때 참조)
   const dayAt=x=>{for(const d of order){if(x<cols[d].getBoundingClientRect().right)return d}return order[6]};
+  const clip=(sg)=>{const s=Math.max(sg.s,H0*60),e=Math.min(sg.e,H1*60);return e<=s?null:{s,e}};
+  const wrapNote=it=>toMin(it.end)<toMin(it.start)?' (다음 날)':'';
   for(const day of order){
     const c=h('div',{class:'tcol',style:'height:'+height,'data-day':day});cols[day]=c;
     for(let hr=H0;hr<=H1;hr++){c.appendChild(h('div',{class:'hrline',style:'top:'+cy(hr-H0)}));if(hr<H1)c.appendChild(h('div',{class:'hrline half',style:'top:'+cy(hr-H0+.5)}))}
-    others.filter(it=>it.day===day).forEach(it=>{
-      const s=Math.max(toMin(it.start),H0*60),e=Math.min(toMin(it.end),H1*60);if(e<=s)return;
-      c.appendChild(h('div',{class:'blk other',style:`top:${cy((s-H0*60)/60)};height:calc(var(--px) * ${(e-s)/60} - 2px);${blockStyle(it.page,it.label,false)}`},[h('div',{class:'l'},[it.page.name])]));
-    });
-    p.items.filter(it=>it.day===day&&it.start&&it.end).forEach(it=>{
-      const s=Math.max(toMin(it.start),H0*60),e=Math.min(toMin(it.end),H1*60);if(e<=s)return;
-      const lbl=h('div',{class:'l'},[it.label||'(이름 없음)']);
+    others.forEach(it=>itemSegs(it).forEach(sg=>{
+      if(sg.day!==day)return;const r=clip(sg);if(!r)return;
+      c.appendChild(h('div',{class:'blk other'+(sg.part==='head'?' seg-head':sg.part==='tail'?' seg-tail':''),style:`top:${cy((r.s-H0*60)/60)};height:calc(var(--px) * ${(r.e-r.s)/60} - 2px);${blockStyle(it.page,it.label,false)}`},[h('div',{class:'l'},[it.page.name])]));
+    }));
+    p.items.forEach(it=>itemSegs(it).forEach(sg=>{
+      if(sg.day!==day)return;const r=clip(sg);if(!r)return;
       const isOvl=ovl.has(it.id);
-      const blk=h('div',{class:'blk'+(isOvl?' ovl':''),'data-id':it.id,style:`top:${cy((s-H0*60)/60)};height:calc(var(--px) * ${(e-s)/60} - 2px);${blockStyle(p,it.label)}`,title:(isOvl?'같은 페이지 루틴과 겹침 · ':'')+`${it.start}–${it.end} ${it.label||''}`},[lbl,h('div',{class:'rs t'}),h('div',{class:'rs b'})]);
+      if(sg.part==='tail'){ // 자정을 넘긴 꼬리 조각: 다음 요일 상단. 클릭하면 같은 이름 편집기, 드래그는 본체에서
+        c.appendChild(h('div',{class:'blk tail seg-tail'+(isOvl?' ovl':''),'data-tail':it.id,style:`top:${cy((r.s-H0*60)/60)};height:calc(var(--px) * ${(r.e-r.s)/60} - 2px);${blockStyle(p,it.label)}`,title:(isOvl?'같은 페이지 루틴과 겹침 · ':'')+`${it.start}–${it.end} (다음 날) ${it.label||''}`,onpointerdown:e=>e.stopPropagation(),onclick:e=>{e.stopPropagation();openLabelEditor(p,it,false,grid)}},[h('div',{class:'l'},[it.label||'(이름 없음)'])]));
+        return;
+      }
+      const s=r.s,e=r.e;
+      const lbl=h('div',{class:'l'},[it.label||'(이름 없음)']);
+      const blk=h('div',{class:'blk'+(isOvl?' ovl':'')+(sg.part==='head'?' seg-head':''),'data-id':it.id,style:`top:${cy((s-H0*60)/60)};height:calc(var(--px) * ${(e-s)/60} - 2px);${blockStyle(p,it.label)}`,title:(isOvl?'같은 페이지 루틴과 겹침 · ':'')+`${it.start}–${it.end}${wrapNote(it)} ${it.label||''}`},[lbl,h('div',{class:'rs t'}),h('div',{class:'rs b'})]);
       // 블록 조작: 본체 드래그=이동(다른 요일로도), 상단/하단 6px(.rs)=시작/끝 시간 조절. 30분 스냅, 최소 30분.
-      // 5px 미만 움직임으로 놓으면 클릭 → 이름 편집기. 드래그 중엔 시간 텍스트를 실시간 표시하고 놓을 때 저장.
+      // 하단을 24:00 넘겨 당기면 end < start 로 저장돼 다음 날까지 이어진다. 5px 미만 움직임으로 놓으면 클릭 → 이름 편집기.
       let d=null;
+      const endStr=m=>fromMin(m>1440?m-1440:m);
       const paintBlk=()=>{
         const s=Math.max(d.s,H0*60),e=Math.min(d.e,H1*60);
         const PX=PXv();blk.style.top=((s-H0*60)/60*PX)+'px';blk.style.height=Math.max(0,(e-s)/60*PX-2)+'px';
         blk.style.transform=d.day===d.day0?'':`translateX(${cols[d.day].offsetLeft-cols[d.day0].offsetLeft}px)`;
-        lbl.textContent=fromMin(d.s)+'–'+fromMin(d.e);
+        lbl.textContent=fromMin(d.s)+'–'+endStr(d.e);
       };
       blk.addEventListener('pointerdown',ev=>{
         ev.stopPropagation();
         if(ev.button!==0&&ev.pointerType==='mouse')return;
         settleLabelEditor(it);
         const t=ev.target.classList;const mode=t.contains('rs')?(t.contains('t')?'top':'bottom'):'move';
-        const s0=toMin(it.start),e0=toMin(it.end);
+        const s0=toMin(it.start);let e0=toMin(it.end);if(e0<s0)e0+=1440; // 자정 넘김은 끝을 다음 날 기준 분으로
         d={mode,x0:ev.clientX,y0:ev.clientY,s0,e0,day0:day,s:s0,e:e0,day,moved:false};
         blk.setPointerCapture(ev.pointerId);
       });
@@ -723,23 +770,24 @@ function renderEditGrid(p){
         if(!d.moved){if(Math.hypot(dx,dy)<5)return;d.moved=true;blk.classList.add('dragging')}
         const dm=Math.round(dy/(PXv()*SLOT/60))*SLOT;
         if(d.mode==='move'){
-          const dur=d.e0-d.s0;
-          d.s=Math.min(Math.max(d.s0+dm,H0*60),Math.max(H0*60,H1*60-dur));d.e=Math.min(d.s+dur,H1*60);d.day=dayAt(ev.clientX);
+          const dur=d.e0-d.s0;const wrapped=d.e0>1440;
+          const maxS=wrapped?H1*60-SLOT:Math.max(H0*60,H1*60-dur); // 넘김 블록은 시작만 보이는 범위 안에 두고 길이를 유지
+          d.s=Math.min(Math.max(d.s0+dm,H0*60),maxS);d.e=d.s+dur;d.day=dayAt(ev.clientX);
         }else if(d.mode==='top'){
-          d.s=Math.min(Math.max(d.s0+dm,H0*60),Math.max(H0*60,d.e0-SLOT));
+          d.s=Math.min(Math.max(d.s0+dm,H0*60),Math.max(H0*60,Math.min(d.e0-SLOT,H1*60-SLOT)));
         }else{
-          d.e=Math.max(Math.min(d.e0+dm,H1*60),Math.min(H1*60,d.s0+SLOT));
+          d.e=Math.min(Math.max(d.e0+dm,d.s0+SLOT),d.s0+1440-SLOT); // 24:00 을 넘겨 당기면 다음 날로
         }
         paintBlk();
       });
       blk.addEventListener('pointerup',()=>{
         if(!d)return;const cur=d;d=null;
         if(!cur.moved){openLabelEditor(p,it,false,grid);return}
-        it.start=fromMin(cur.s);it.end=fromMin(cur.e);it.day=cur.day;save();render();
+        it.start=fromMin(cur.s);it.end=endStr(cur.e);it.day=cur.day;save();render();
       });
       blk.addEventListener('pointercancel',()=>{if(!d)return;d=null;render()});
       c.appendChild(blk);
-    });
+    }));
     // drag to create
     let drag=null,ghost=null;
     const slotAt=(ev)=>{const r=c.getBoundingClientRect();const y=ev.clientY-r.top;return Math.min(nslots-1,Math.max(0,Math.floor(y/(PXv()*SLOT/60))))};
@@ -760,10 +808,12 @@ function renderEditGrid(p){
     function paint(){const SPX=PXv()*SLOT/60;const a=Math.min(drag.s,drag.e),b=Math.max(drag.s,drag.e)+1;ghost.style.top=(a*SPX)+'px';ghost.style.height=((b-a)*SPX-2)+'px';ghost.innerHTML='<div class="l">'+fromMin(H0*60+a*SLOT)+'–'+fromMin(H0*60+b*SLOT)+'</div>'}
     grid.appendChild(c);
   }
+  if(base1<24)grid.appendChild(band('bottom',base1,24));
   wrap.appendChild(grid);
   if(pendingEdit){const pe=pendingEdit;pendingEdit=null;const it=p.items.find(x=>x.id===pe.itemId);if(it)setTimeout(()=>openLabelEditor(p,it,pe.isNew,grid,pe),0)}
   return wrap;
 }
+
 let lblEd=null;
 function closeLabelEditor(){if(lblEd){lblEd.el.remove();lblEd.blk&&lblEd.blk.classList.remove('editing');lblEd=null}}
 function settleLabelEditor(keep){ // 열린 이름 편집기를 렌더 없이 확정. 새 항목이 빈 이름이면 삭제(단 keep 항목은 유지). 블록 드래그 직전에 씀
