@@ -279,3 +279,96 @@ button[disabled]:active{transform:none}
   .mgrid{min-width:0}.mgrid .day{min-height:64px}
 }
 @media (prefers-reduced-motion:reduce){*{transition:none!important}}
+
+/* ============================================================
+   iOS / macOS 룩 (docs/ref 참고 이미지 기준). iOS = 컴포넌트, macOS = 레이아웃
+   ============================================================ */
+:root{--muted:#8A8A8E;--danger:#FF3B30}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){--muted:#98989D;--danger:#FF453A}}
+:root[data-theme="dark"]{--muted:#98989D;--danger:#FF453A}
+/* 사이드바·상단바 비율 (macOS: 사이드바 ≈ 1/4) */
+.side{width:216px}
+.side h1{font-size:20px;font-weight:800;letter-spacing:-.02em;padding:16px 16px 8px}
+.side .sec{font-size:12px;font-weight:600;color:var(--muted);padding:14px 16px 4px}
+.nav li{font-size:14px;padding:7px 10px}
+.bar{padding:8px 12px;gap:6px}
+.bar h2{font-size:22px;font-weight:800;letter-spacing:-.02em;margin:0 6px 0 2px}
+.bar h2 .yr{font-weight:400;color:var(--muted);font-size:17px;letter-spacing:0}
+/* iOS 알약 버튼 (흰 배경 + 얇은 그림자) */
+.bar button.quiet{background:var(--panel);color:var(--ink);border-radius:999px;padding:6px 12px;font-weight:600;box-shadow:0 1px 2px rgba(0,0,0,.08),0 0 0 1px rgba(0,0,0,.05)}
+.bar button.quiet:hover{filter:brightness(.97);background:var(--panel)}
+.bar button.primary{border-radius:999px;padding:6px 14px;font-weight:600}
+/* 세그먼트: 회색 트랙 + 미끄러지는 흰 선택 배경 */
+.seg{position:relative;background:rgba(120,120,128,.14);padding:2px;border-radius:9px;gap:0}
+.seg .pill{position:absolute;top:2px;bottom:2px;left:0;width:0;border-radius:7px;background:var(--seg-sel);box-shadow:0 1px 3px rgba(0,0,0,.14),0 0 0 .5px rgba(0,0,0,.04);transform-origin:left center;pointer-events:none}
+.seg button{position:relative;z-index:1;background:transparent!important;box-shadow:none!important;font-size:13px;padding:4px 14px;border-radius:7px}
+.seg button.sel{color:var(--ink);font-weight:600}
+.bar .seg{flex:none}
+/* 토글: 실제 knob 요소 (모션 대상) */
+.sw{width:34px;height:20px;border-radius:10px;background:rgba(120,120,128,.28)}
+.sw .knob{position:absolute;top:2px;left:2px;width:16px;height:16px;border-radius:50%;background:#fff;box-shadow:0 2px 4px rgba(0,0,0,.25),0 0 0 .5px rgba(0,0,0,.04);transform:translateX(0)}
+.on>.sw .knob{transform:translateX(14px)}
+.sw::after,.on>.sw::after{content:none}
+/* 그리드 헤더: 요일 작게 + 날짜 굵게, 오늘은 빨간 원 (macOS) */
+.wgrid .whd,.egrid .whd{font-size:12px;font-weight:600;color:var(--muted);padding:6px 4px}
+.wgrid .whd .wd{font-weight:500}
+.wgrid .whd .n{display:inline-block;min-width:22px;padding:1px 5px;border-radius:11px;font-size:14px;font-weight:700;color:var(--ink);font-variant-numeric:tabular-nums;line-height:1.3}
+.wgrid .whd.today{color:var(--danger)}
+.wgrid .whd.today .n{background:var(--danger);color:#fff}
+.mgrid .hd{text-align:center;font-weight:600;color:var(--muted)}
+.mgrid .day .n{font-size:14px;font-weight:700;min-width:26px;padding:2px 6px;border-radius:13px}
+.mgrid .day.today .n{background:var(--danger);color:#fff}
+.mgrid .day.sun .n{color:var(--danger)}
+.mgrid .day.today.sun .n{color:#fff}
+/* 시간 축·눈금 (macOS: 작고 연한 라벨, 옅은 선) */
+.hrlab{font-size:10px;right:8px;font-weight:500}
+.hrline{opacity:.55}
+.egrid .hrline.half{opacity:.25}
+/* 현재 시각 */
+.nowline{position:absolute;left:0;right:0;border-top:1.5px solid var(--danger);z-index:3;pointer-events:none}
+.nowline::before{content:"";position:absolute;left:-4px;top:-4px;width:7px;height:7px;border-radius:50%;background:var(--danger)}
+.nowpill{position:absolute;right:4px;transform:translateY(-50%);background:var(--danger);color:#fff;font-size:10px;font-weight:700;padding:1px 6px;border-radius:999px;z-index:3;font-variant-numeric:tabular-nums;pointer-events:none}
+/* 블록: 작은 모서리, 촘촘한 여백, 긴 블록엔 시간 줄 (macOS) */
+.blk{border-radius:5px;padding:2px 5px;font-size:11px;line-height:1.3}
+.blk .l{font-weight:700}
+.blk .tm{display:none;font-size:10px;opacity:.85;font-variant-numeric:tabular-nums}
+.blk.tall .tm{display:block}
+.blk.seg-head{border-bottom-left-radius:0;border-bottom-right-radius:0}
+.blk.seg-tail{border-top-left-radius:0;border-top-right-radius:0}
+/* 설정: iOS 그룹 리스트 */
+.spane .sect{font-size:12px;font-weight:600;color:var(--muted);margin:14px 4px 6px;text-transform:none}
+.spane .sect:first-child{margin-top:0}
+.spane .frow{background:var(--panel);border-radius:12px;padding:10px 14px;margin:0 0 8px;justify-content:space-between;font-size:14px;box-shadow:0 0 0 .5px rgba(0,0,0,.05)}
+.spane .frow .seg,.spane .frow .swatches{margin-left:auto}
+.spane .chk{background:var(--panel);border-radius:12px;padding:10px 14px;margin:0 0 8px;font-size:14px;box-shadow:0 0 0 .5px rgba(0,0,0,.05)}
+.spane .hint{margin:2px 4px 10px;font-size:12px}
+.spane .cfbox{margin:0 0 8px}
+.spane .pvbox{margin:0 0 8px}
+.stabs button{font-size:14px;padding:9px 12px}
+/* 모달 → 하단 시트 */
+.ov{align-items:flex-end;justify-content:center;padding:0}
+.md{width:min(560px,100%);max-width:none;max-height:88vh;overflow:auto;border-radius:22px 22px 0 0;padding:10px 20px 24px;box-shadow:0 -12px 40px rgba(0,0,0,.18);touch-action:none}
+.md .grab{width:36px;height:5px;border-radius:3px;background:rgba(120,120,128,.4);margin:0 auto 10px;cursor:grab;flex:none}
+.md.grabbing .grab{cursor:grabbing}
+.md.settings{width:min(680px,100%);max-width:none;border-radius:22px 22px 0 0;max-height:88vh;padding:10px 0 0;overflow:hidden}
+.md.settings .shead{padding:0 12px 10px 18px}
+/* 뷰 전환 크로스페이드·블록 안착 */
+.main{position:relative}
+.main.leaving{position:absolute;inset:0;pointer-events:none;z-index:5}
+.egrid .blk.settling{box-shadow:0 8px 20px rgba(0,0,0,.28);z-index:4}
+.egrid .blk.dragging{box-shadow:0 10px 24px rgba(0,0,0,.32)}
+@media (max-width:720px){.side{width:auto}.bar h2{font-size:18px}}
+@media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
+
+/* 2차: 월간 칩은 iOS 처럼 옅은 배경 + 진한 글자, 요일 헤더는 평일 진하게·주말 흐리게, 날짜 숫자 크게. 주간·일간 약속 블록엔 macOS 식 왼쪽 띠 */
+.mgrid .ev{--tint:16%;background:color-mix(in srgb,var(--ec) var(--tint),var(--panel));color:color-mix(in srgb,var(--ec) 80%,#000);font-weight:600;border-radius:5px}
+.mgrid .ev:hover{filter:brightness(.96)}
+.mgrid .ev .t{opacity:.75;font-weight:500}
+.mgrid .ev .tag{background:rgba(0,0,0,.08);color:inherit}
+.mgrid .hd{color:var(--ink);font-weight:700;font-size:12px}
+.mgrid .hd.we{color:var(--muted);font-weight:600}
+.mgrid .day .n{font-size:15px}
+.blk.evb{box-shadow:inset 3px 0 0 rgba(0,0,0,.22)}
+.blk.evb.cf{box-shadow:inset 3px 0 0 rgba(0,0,0,.22),inset 0 0 0 2px var(--warn)}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]) .mgrid .ev{--tint:30%;color:color-mix(in srgb,var(--ec) 70%,#fff)}:root:not([data-theme="light"]) .mgrid .ev .tag{background:rgba(255,255,255,.14)}:root:not([data-theme="light"]) .blk.evb{box-shadow:inset 3px 0 0 rgba(255,255,255,.3)}:root:not([data-theme="light"]) .blk.evb.cf{box-shadow:inset 3px 0 0 rgba(255,255,255,.3),inset 0 0 0 2px var(--warn)}}
+:root[data-theme="dark"] .mgrid .ev{--tint:30%;color:color-mix(in srgb,var(--ec) 70%,#fff)}:root[data-theme="dark"] .mgrid .ev .tag{background:rgba(255,255,255,.14)}:root[data-theme="dark"] .blk.evb{box-shadow:inset 3px 0 0 rgba(255,255,255,.3)}:root[data-theme="dark"] .blk.evb.cf{box-shadow:inset 3px 0 0 rgba(255,255,255,.3),inset 0 0 0 2px var(--warn)}

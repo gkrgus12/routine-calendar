@@ -332,13 +332,73 @@ function pageConflicts(page){
    2. 렌더링 (사이드바, 월간, 주간, 페이지 편집기, 드래그 그리드)
    ========================================================= */
 const app=document.getElementById('app');
+/* ---------- 모션: Web Animations API + 스프링을 linear() 이징으로 샘플링. prefers-reduced-motion 이면 전부 즉시 전환 ---------- */
+const REDUCED=()=>matchMedia('(prefers-reduced-motion: reduce)').matches;
+const LINEAR_OK=(()=>{try{return CSS.supports('animation-timing-function','linear(0, 1)')}catch(e){return false}})();
+function springEasing(bounce){ // 감쇠 진동(ζ=1-bounce, ω=2π: 정규화 시간 1 에서 안착)을 0~1 구간에서 32점 샘플링. bounce 가 클수록 오버슈트
+  if(!LINEAR_OK)return 'cubic-bezier(.2,.9,.3,1.05)';
+  const zeta=1-Math.min(.9,Math.max(0,bounce||0)),w=2*Math.PI,N=32,pts=[];
+  for(let i=0;i<=N;i++){const t=i/N;let v;
+    if(zeta<1){const wd=w*Math.sqrt(1-zeta*zeta);v=1-Math.exp(-zeta*w*t)*(Math.cos(wd*t)+(zeta*w/wd)*Math.sin(wd*t))}
+    else v=1-Math.exp(-w*t)*(1+w*t);
+    pts.push(i===N?'1':v.toFixed(4))}
+  return `linear(${pts.join(',')})`;
+}
+// anim(el,{x:[8,0],y,scale,scaleX,opacity},{duration(ms)=220,bounce=.2,fill}) → Promise. transform/opacity 만 써서 합성기에서 돌고 시킹 가능
+function anim(el,kf,opts){
+  if(!el)return Promise.resolve();
+  const o=Object.assign({duration:220,bounce:.2,fill:'none'},opts||{});
+  const tf=i=>{const p=[];const g=k=>Array.isArray(kf[k])?kf[k][i]:kf[k];
+    if(kf.x!==undefined)p.push(`translateX(${g('x')}px)`);if(kf.y!==undefined)p.push(`translateY(${g('y')}px)`);
+    if(kf.scale!==undefined)p.push(`scale(${g('scale')})`);if(kf.scaleX!==undefined)p.push(`scaleX(${g('scaleX')})`);
+    return p.length?p.join(' '):'none'};
+  const frame=i=>{const f={transform:tf(i)};if(kf.opacity!==undefined)f.opacity=Array.isArray(kf.opacity)?kf.opacity[i]:kf.opacity;return f};
+  if(REDUCED()||typeof el.animate!=='function'){ // 즉시 최종 상태
+    if(o.fill==='forwards'){const f=frame(1);el.style.transform=f.transform;if(f.opacity!==undefined)el.style.opacity=String(f.opacity)}
+    return Promise.resolve();
+  }
+  try{const a=el.animate([frame(0),frame(1)],{duration:o.duration,easing:o.easing||springEasing(o.bounce),fill:o.fill});
+    return Promise.race([a.finished.catch(()=>{}),new Promise(r=>setTimeout(r,o.duration+40))])} // 애니메이션 클록이 멈춘 환경(백그라운드 탭 등)에서도 후속 작업(제거 등)은 반드시 진행
+  catch(e){return Promise.resolve()}
+}
+let lastViewKey=null,pendingSettle=null,pendingKnob=null;const segPrev={};
+const viewKey=()=>view.type==='page'?'page:'+view.pageId:view.type;
+// 뷰 전환(일/주/월, 페이지 전환): 나가는 화면을 위에 겹쳐 페이드아웃, 들어오는 화면은 크로스페이드 + 8px 슬라이드. 같은 뷰 안의 ‹ › 이동은 즉시
+function transitionMain(oldMain,main){
+  if(REDUCED())return;
+  [...main.children].forEach(c=>anim(c,{opacity:[0,1],x:[8,0]},{duration:220,bounce:.15}));
+  if(oldMain){oldMain.classList.add('leaving');main.appendChild(oldMain);anim(oldMain,{opacity:[1,0],x:[0,-8]},{duration:160,easing:'ease-out',fill:'forwards'}).then(()=>oldMain.remove())}
+}
+function settleBlock(){ // 드래그를 놓은 블록: 새로 그려진 자리에서 1.02 → 1 스프링으로 안착
+  if(!pendingSettle)return;const id=pendingSettle;pendingSettle=null;
+  const b=document.querySelector(`.egrid .blk[data-id="${id}"]`);if(!b)return;
+  b.classList.add('settling');anim(b,{scale:[1.02,1]},{duration:250,bounce:.4}).then(()=>b.classList.remove('settling'));
+}
+function animateKnob(){ // 토글: 새로 그려진 knob 를 이전 위치에서 미끄러지듯
+  if(!pendingKnob)return;const k=pendingKnob;pendingKnob=null;
+  const sw=document.querySelector(`.sw[data-sw="${k.id}"]`);if(!sw)return;const knob=sw.querySelector('.knob');if(!knob)return;
+  const on=sw.parentElement.classList.contains('on');const from=k.from?14:0,to=on?14:0;if(from!==to)anim(knob,{x:[from,to]},{duration:200,bounce:.25});
+}
+// 세그먼트의 선택 배경(.pill)을 선택 버튼 위치로 놓고, 직전 위치가 기록돼 있으면 거기서 미끄러지듯 이동
+function layoutSegs(root){
+  (root||document).querySelectorAll('.seg').forEach(seg=>{
+    const pill=seg.querySelector(':scope > .pill'),sel=seg.querySelector('button.sel');if(!pill||!sel)return;
+    const left=sel.offsetLeft,width=sel.offsetWidth;pill.style.left=left+'px';pill.style.width=width+'px';
+    const name=seg.getAttribute('aria-label');const prev=segPrev[name];
+    if(prev&&width&&(prev.left!==left||prev.width!==width)){delete segPrev[name];anim(pill,{x:[prev.left-left,0],scaleX:[prev.width/width,1]},{duration:220,bounce:.2})}
+  });
+}
 function render(){
   refreshPalette();
   expandFor(view.type==='week'?'week:'+ymd(weekStartOf(view.weekStart||new Date())):view.type==='day'?'day:'+view.day:view.type==='page'?'page:'+view.pageId:'month'); // 다른 뷰/주/날/페이지로 가면 띠 펼침 초기화
+  const key=viewKey();const oldMain=app.querySelector('.main');
   app.innerHTML='';
   app.appendChild(renderSide());
-  app.appendChild(renderMain());
+  const main=renderMain();app.appendChild(main);
   fitGrids(); // 시간당 높이(--px) 적용: DOM 이 붙은 뒤 실제 높이를 재서 계산
+  layoutSegs();animateKnob();settleBlock();
+  if(lastViewKey!==null&&lastViewKey!==key)transitionMain(oldMain,main);
+  lastViewKey=key;
 }
 function h(tag,attrs,children){
   const el=document.createElement(tag);
@@ -365,7 +425,9 @@ function refreshPalette(){
   document.documentElement.style.setProperty('--routine-alpha',String(cfg('routineAlpha')/100)); // 일간·주간 루틴 블록 + 편집 그리드 other 블록 투명도
 }
 // 약속 블록·칩 인라인 스타일: 설정의 약속 색 하나로 채우고, 밝은 색이면 글자를 어둡게
-function eventStyle(){const ci=cfg('eventColor')%ECOL.length;const hsl=EBASE[ci];return 'background:'+ECOL[ci]+(hsl&&hsl[2]>.62?';color:#14181d':';color:#fff')}
+function eventStyle(mode){const ci=cfg('eventColor')%ECOL.length;const hsl=EBASE[ci];
+  if(mode==='chip')return '--ec:'+ECOL[ci]; // 월간 칩: 색만 넘기고 옅은 배경·진한 글자는 CSS 가 섞음 (iOS 월간 칩)
+  return 'background:'+ECOL[ci]+(hsl&&hsl[2]>.62?';color:#14181d':';color:#fff')}
 // 블록 인라인 스타일(배경, 필요하면 글자색). colorByLabel 이 켜진 페이지는 라벨 해시로 고른 변형색, 이름 없으면 페이지 기본색
 function blockStyle(p,label,withInk){
   const ci=p.color%PCOL.length,base=PCOL[ci],k=labelKey(label);
@@ -389,10 +451,14 @@ function hourPx(grid){
   return Math.max(32,Math.floor((avail-headerH-2)/hours));
 }
 function fitGrids(){document.querySelectorAll('.wgrid,.egrid').forEach(grid=>grid.style.setProperty('--px',hourPx(grid)+'px'))}
-let fitT=null;window.addEventListener('resize',()=>{clearTimeout(fitT);fitT=setTimeout(fitGrids,50)}); // 창 크기 변경 시 다시 계산 (짧게 디바운스)
+let fitT=null;window.addEventListener('resize',()=>{clearTimeout(fitT);fitT=setTimeout(()=>{fitGrids();layoutSegs()},50)}); // 창 크기 변경 시 다시 계산 (짧게 디바운스)
 
 // iOS 세그먼트 컨트롤 (상단바 뷰 전환과 설정 모달에서 공용)
-function segControl(name,options,value,onPick){const el=h('div',{class:'seg',role:'group','aria-label':name});options.forEach(([k,label])=>el.appendChild(h('button',{class:value===k?'sel':'','aria-pressed':value===k?'true':'false',onclick:()=>onPick(k)},[label])));return el}
+function segControl(name,options,value,onPick){
+  const el=h('div',{class:'seg',role:'group','aria-label':name},[h('span',{class:'pill','aria-hidden':'true'})]); // .pill 이 선택 배경, 클릭 직전 위치를 기록해 미끄러지게
+  options.forEach(([k,label])=>el.appendChild(h('button',{class:value===k?'sel':'','aria-pressed':value===k?'true':'false',onclick:()=>{const sel=el.querySelector('button.sel');if(sel)segPrev[name]={left:sel.offsetLeft,width:sel.offsetWidth};onPick(k)}},[label])));
+  return el;
+}
 const calSeg=()=>segControl('보기',[['day','일간'],['week','주간'],['month','월간']],view.type,setCalView);
 const isCalView=()=>['day','week','month'].includes(view.type);
 
@@ -410,7 +476,7 @@ function renderSide(){
     const li=h('li',{class:(p.active?'on ':'')+(view.type==='page'&&view.pageId===p.id?'sel':''),onclick:()=>{view.type='page';view.pageId=p.id;render()}},[
       h('span',{class:'dot',style:'background:'+PCOL[p.color%PCOL.length]}),
       h('span',{class:'nm'},[p.name||'(이름 없음)']),
-      h('span',{class:'sw',title:p.active?'활성 — 클릭하면 끔':'비활성 — 클릭하면 켬',onclick:(e)=>{e.stopPropagation();togglePage(p)}})
+      h('span',{class:'sw','data-sw':p.id,title:p.active?'활성 — 클릭하면 끔':'비활성 — 클릭하면 켬',onclick:(e)=>{e.stopPropagation();pendingKnob={id:p.id,from:p.active};togglePage(p)}},[h('i',{class:'knob'})])
     ]);
     pl.appendChild(li);
   });
@@ -454,17 +520,18 @@ function renderMonth(main){
   ensureGoogleEvents(view.ym);
   const bar=h('div',{class:'bar'},[
     h('button',{class:'quiet',onclick:()=>{shiftMonth(-1)}},['‹']),
-    h('h2',null,[`${y}년 ${m}월`]),
+    h('h2',null,[h('span',{class:'yr'},[`${y}년`]),' ',h('b',null,[`${m}월`])]),
     h('button',{class:'quiet',onclick:()=>{shiftMonth(1)}},['›']),
     h('button',{class:'quiet',onclick:()=>{view.ym=today.slice(0,7);render()}},['오늘']),
     h('span',{class:'sp'}),
     calSeg(),
+    h('span',{class:'sp'}),
     h('button',{class:'primary',onclick:()=>openEvent(null,today)},['+ 약속'])
   ]);
   main.appendChild(bar);
   const body=h('div',{class:'body'});
   const grid=h('div',{class:'mgrid'});
-  dayOrder().forEach(d=>grid.appendChild(h('div',{class:'hd'},[DAYS[d]])));
+  dayOrder().forEach(d=>grid.appendChild(h('div',{class:'hd'+(d>=5?' we':'')},[DAYS[d]])));
   const first=new Date(y,m-1,1);const off=dayPos(wd(first));
   const start=new Date(y,m-1,1-off);
   const evByDate=indexEvents();
@@ -477,7 +544,7 @@ function renderMonth(main){
       const cf=!ev.allDay&&eventConflicts(ev).some(c=>c.date===key);
       // 구글 이벤트는 점선 테두리(.g), 종일 이벤트는 날짜 상단 한 줄(.allday, 정렬로 맨 위)
       const tmp=!ev.google&&G.status!=='on'; // 미연결 상태의 로컬 약속 = 임시 배지 (구글/로컬 구분 표기는 그 외에 없음)
-      cell.appendChild(h('div',{class:'ev'+(ev.allDay?' allday':'')+(tmp?' tmp':''),style:eventStyle(),'data-src':ev.google?'g':'l',title:ev.title,onclick:(e)=>{e.stopPropagation();openEvent(ev.src||ev)}},[
+      cell.appendChild(h('div',{class:'ev'+(ev.allDay?' allday':'')+(tmp?' tmp':''),style:eventStyle('chip'),'data-src':ev.google?'g':'l',title:ev.title,onclick:(e)=>{e.stopPropagation();openEvent(ev.src||ev)}},[
         cf?h('span',{class:'cf',title:'활성 루틴과 겹침'}):null,
         tmp?h('span',{class:'tag'},['임시']):null,
         ev.allDay?null:h('span',{class:'t'},[ev.startTime]),h('span',{class:'ti'},[ev.title||'(제목 없음)'])
@@ -514,6 +581,7 @@ function renderWeek(main){
     h('button',{class:'quiet',onclick:()=>{view.weekStart=weekStartOf(new Date());render()}},['이번 주']),
     h('span',{class:'sp'}),
     calSeg(),
+    h('span',{class:'sp'}),
   ]);
   main.appendChild(bar);
   const dates=[];for(let i=0;i<7;i++){const d=new Date(ws);d.setDate(ws.getDate()+i);dates.push(d)}
@@ -531,6 +599,7 @@ function renderDay(main){
     h('button',{class:'quiet',onclick:()=>{view.day=today;render()}},['오늘']),
     h('span',{class:'sp'}),
     calSeg(),
+    h('span',{class:'sp'}),
     h('button',{class:'primary',onclick:()=>openEvent(null,view.day)},['+ 약속'])
   ]);
   main.appendChild(bar);
@@ -556,7 +625,7 @@ function timeGridBody(dates,key){
   const grid=h('div',{class:'wgrid'+(n===1?' dgrid':''),style:`grid-template-columns:48px repeat(${n},minmax(0,1fr))`,'data-hours':hours});
   const PXv=()=>parseFloat(getComputedStyle(grid).getPropertyValue('--px'))||44; // 드래그 픽셀 계산용 현재 시간당 px
   grid.appendChild(h('div',{class:'whd'},['']));
-  dates.forEach(d=>grid.appendChild(h('div',{class:'whd'+(ymd(d)===today?' today':'')},[`${DAYS[wd(d)]} ${d.getDate()}`])));
+  dates.forEach(d=>grid.appendChild(h('div',{class:'whd'+(ymd(d)===today?' today':'')},[h('span',{class:'wd'},[DAYS[wd(d)]]),' ',h('span',{class:'n'},[String(d.getDate())])])));
   const evIdx=indexEvents();
   // 종일 이벤트 줄: 하나라도 있으면 헤더 아래에 한 줄 추가
   const adWeek=dates.map(d=>(evIdx[ymd(d)]||[]).filter(ev=>ev.allDay));
@@ -601,7 +670,7 @@ function timeGridBody(dates,key){
       const tmp=!ev.google&&G.status!=='on';
       const segCls=ev.seg==='head'?' seg-head':ev.seg==='tail'?' seg-tail':ev.seg==='mid'?' seg-mid':'';
       // 약속 블록은 pointerdown 을 막아 열(드래그 생성)로 안 가게 하고, 클릭하면 편집 (조각은 원본 src 로)
-      col.appendChild(h('div',{class:'blk evb'+(cf?' cf':'')+segCls,'data-src':ev.google?'g':'l',style:`top:${cy((s-H0*60)/60)};height:calc(var(--px) * ${(e-s)/60} - 2px);${eventStyle()}`,title:ev.title+(cf?' · 활성 루틴과 겹침':''),onpointerdown:e=>e.stopPropagation(),onclick:()=>openEvent(ev.src||ev)},[h('div',{class:'l'},[(tmp?'임시 · ':'')+(ev.title||'(제목 없음)')])]));
+      col.appendChild(h('div',{class:'blk evb'+(cf?' cf':'')+segCls+((e-s)>=60?' tall':''),'data-src':ev.google?'g':'l',style:`top:${cy((s-H0*60)/60)};height:calc(var(--px) * ${(e-s)/60} - 2px);${eventStyle()}`,title:ev.title+(cf?' · 활성 루틴과 겹침':''),onpointerdown:e=>e.stopPropagation(),onclick:()=>openEvent(ev.src||ev)},[h('div',{class:'l'},[(tmp?'임시 · ':'')+(ev.title||'(제목 없음)')]),(e-s)>=60?h('div',{class:'tm'},[ev.startTime+'–'+ev.endTime]):null]));
     });
     // 빈 시간(또는 배경인 루틴 블록 위) 드래그 → 약속 생성. 편집 그리드와 같은 30분 스냅·고스트. 5px 미만 움직임은 클릭 = 기본 길이
     let drag=null,ghost=null;
@@ -623,6 +692,12 @@ function timeGridBody(dates,key){
     col.addEventListener('pointerup',finish);col.addEventListener('pointercancel',()=>{drag=null;ghost&&ghost.remove();ghost=null});
     grid.appendChild(col);
   });
+  // 현재 시각: 오늘 컬럼에 빨간 선, 시간 축에 시각 pill (1분마다 위치 갱신)
+  const nowIdx=dates.findIndex(d=>ymd(d)===today);
+  if(nowIdx>=0){grid.dataset.h0=H0;const nm=new Date(),m=nm.getHours()*60+nm.getMinutes();
+    if(m>=H0*60&&m<H1*60){const t=cy((m-H0*60)/60);
+      tc.appendChild(h('div',{class:'nowpill',style:'top:'+t},[pad(nm.getHours())+':'+pad(nm.getMinutes())]));
+      grid.querySelectorAll('.tcol:not(.first)')[nowIdx].appendChild(h('div',{class:'nowline',style:'top:'+t}))}}
   if(base1<24)grid.appendChild(band('bottom',base1,24));
   wrap.appendChild(grid);body.appendChild(wrap);
   return body;
@@ -667,7 +742,7 @@ function renderPage(main){
   ]));
   // 같은 이름끼리 같은 색 (page.colorByLabel)
   ed.appendChild(h('div',{class:'row',style:'margin-top:6px'},[
-    h('button',{class:'tg'+(p.colorByLabel?' on':''),role:'switch','aria-checked':p.colorByLabel?'true':'false',onclick:()=>{p.colorByLabel=!p.colorByLabel;save();render()}},[h('span',{class:'sw'}),'같은 이름끼리 같은 색']),
+    h('button',{class:'tg'+(p.colorByLabel?' on':''),role:'switch','aria-checked':p.colorByLabel?'true':'false',onclick:()=>{pendingKnob={id:'tg',from:p.colorByLabel};p.colorByLabel=!p.colorByLabel;save();render()}},[h('span',{class:'sw','data-sw':'tg'},[h('i',{class:'knob'})]),'같은 이름끼리 같은 색']),
     h('span',{class:'hint',style:'margin:0'},['켜면 라벨마다 페이지 색의 밝기·채도를 바꿔 배정해요. 이름 없는 블록은 기본색.'])
   ]));
   ed.appendChild(h('p',{class:'sub',style:'margin-top:8px'},['빈 칸을 드래그하면 루틴이 생겨요 (30분 단위). 블록을 끌면 이동, 위·아래 가장자리를 끌면 시간 조절. 클릭하면 이름 수정·삭제·요일 복제. 흐린 블록은 다른 활성 페이지의 루틴.']));
@@ -708,7 +783,7 @@ function renderEditGrid(p){
   const wrap=h('div',{class:'egwrap'});const grid=h('div',{class:'egrid','data-hours':hours});
   const PXv=()=>parseFloat(getComputedStyle(grid).getPropertyValue('--px'))||40; // 드래그·리사이즈 픽셀 계산용 현재 시간당 px
   grid.appendChild(h('div',{class:'whd'},['']));
-  order.forEach(d=>grid.appendChild(h('div',{class:'whd'},[DAYS[d]])));
+  order.forEach(d=>grid.appendChild(h('div',{class:'whd'},[h('span',{class:'wd'},[DAYS[d]])])));
   const countHidden=(lo,hi)=>{const rt=new Set();p.items.forEach(it=>itemSegs(it).forEach(sg=>{if(overlap(sg.s,sg.e,lo,hi))rt.add(it.id)}));return rt.size};
   const band=(side,lo,hi)=>{const open=ex[side];const n=countHidden(lo*60,hi*60);
     const label=open?`${pad(lo)}–${pad(hi)} 펼침 · 클릭하면 접어요`:(n?`${pad(lo)}–${pad(hi)} · 루틴 ${n}`:'');
@@ -752,7 +827,7 @@ function renderEditGrid(p){
       const paintBlk=()=>{
         const s=Math.max(d.s,H0*60),e=Math.min(d.e,H1*60);
         const PX=PXv();blk.style.top=((s-H0*60)/60*PX)+'px';blk.style.height=Math.max(0,(e-s)/60*PX-2)+'px';
-        blk.style.transform=d.day===d.day0?'':`translateX(${cols[d.day].offsetLeft-cols[d.day0].offsetLeft}px)`;
+        blk.style.transform=(d.day===d.day0?'':`translateX(${cols[d.day].offsetLeft-cols[d.day0].offsetLeft}px) `)+(d.moved?'scale(1.02)':''); // 잡는 순간 1.02배 (+ .dragging 그림자)
         lbl.textContent=fromMin(d.s)+'–'+endStr(d.e);
       };
       blk.addEventListener('pointerdown',ev=>{
@@ -783,7 +858,7 @@ function renderEditGrid(p){
       blk.addEventListener('pointerup',()=>{
         if(!d)return;const cur=d;d=null;
         if(!cur.moved){openLabelEditor(p,it,false,grid);return}
-        it.start=fromMin(cur.s);it.end=endStr(cur.e);it.day=cur.day;save();render();
+        it.start=fromMin(cur.s);it.end=endStr(cur.e);it.day=cur.day;pendingSettle=it.id;save();render();
       });
       blk.addEventListener('pointercancel',()=>{if(!d)return;d=null;render()});
       c.appendChild(blk);
@@ -869,6 +944,24 @@ function openLabelEditor(p,it,isNew,grid,opts){
    ========================================================= */
 
 /* event modal */
+/* ---------- 하단 시트 (약속·설정 모달 공용): 딤 페이드, 스프링 진입, Esc·바깥 클릭·아래로 드래그로 닫힘 ---------- */
+function openSheet(ov,md,close){
+  md.insertBefore(h('div',{class:'grab','aria-hidden':'true'}),md.firstChild);
+  ov.appendChild(md);document.body.appendChild(ov);
+  anim(ov,{opacity:[0,1]},{duration:180,easing:'ease-out'});
+  anim(md,{y:[56,0],opacity:[0,1]},{duration:250,bounce:.25});
+  // 아래로 드래그: 입력·버튼·탭 위에서는 시작하지 않는다. 90px 넘게 내리면 닫고, 아니면 스프링으로 복귀
+  let dg=null;
+  md.addEventListener('pointerdown',ev=>{if(ev.button!==0&&ev.pointerType==='mouse')return;if(ev.target.closest('input,select,textarea,button,a,label,.stabs,.swatches,.seg,.pvbox'))return;dg={y0:ev.clientY,dy:0};try{md.setPointerCapture(ev.pointerId)}catch(e){}md.classList.add('grabbing')});
+  md.addEventListener('pointermove',ev=>{if(!dg)return;dg.dy=Math.max(0,ev.clientY-dg.y0);md.style.transform=`translateY(${dg.dy}px)`});
+  const end=()=>{if(!dg)return;const dy=dg.dy;dg=null;md.classList.remove('grabbing');if(dy>90)close();else{md.style.transform='';anim(md,{y:[dy,0]},{duration:250,bounce:.3})}};
+  md.addEventListener('pointerup',end);md.addEventListener('pointercancel',end);
+}
+function dismissSheet(ov,md){ // 닫힘: 시트는 아래로 사라지고 딤은 페이드아웃, 끝나면 제거 (두 번 호출돼도 한 번만)
+  if(ov.dataset.closing)return;ov.dataset.closing='1';ov.style.pointerEvents='none';
+  const m=/translateY\((-?[\d.]+)px\)/.exec(md.style.transform||'');const cur=m?Number(m[1]):0;
+  Promise.all([anim(md,{y:[cur,72],opacity:[1,0]},{duration:160,easing:'ease-in',fill:'forwards'}),anim(ov,{opacity:[1,0]},{duration:160,easing:'ease-in',fill:'forwards'})]).then(()=>ov.remove());
+}
 function openEvent(ev,dateKey,preset){ // preset: 드래그 생성 시 {startTime,endTime}
   // 연결돼 있으면 새 약속과 구글 이벤트는 구글 캘린더(primary)에 직접 쓴다. 로컬 약속은 미연결 상태에서만 새로 만들 수 있고, 남아 있는 로컬 약속은 "임시" 로 편집·삭제만 된다
   const isNew=!ev;
@@ -936,10 +1029,10 @@ function openEvent(ev,dateKey,preset){ // preset: 드래그 생성 시 {startTim
       }},[isNew?'추가':'저장'])
     ])
   ]);
-  ov.appendChild(md);document.body.appendChild(ov);
+  openSheet(ov,md,close);
   refreshCf();
   const onKey=(e)=>{if(e.key==='Escape'&&!busy)close()};document.addEventListener('keydown',onKey);
-  function close(){ov.remove();document.removeEventListener('keydown',onKey)}
+  function close(){dismissSheet(ov,md);document.removeEventListener('keydown',onKey)}
   setTimeout(()=>{const t=md.querySelector('input[type=text]');t&&t.focus()},0);
 }
 /* settings modal (좌측 탭: 일반 / 약속 / 백업). 모든 뷰의 상단바 ⚙ 설정 버튼으로 연다 */
@@ -959,7 +1052,7 @@ function openSettings(tab){
   const tabs=h('div',{class:'stabs',role:'tablist'});
   const pane=h('div',{class:'spane'});
   function drawTabs(){tabs.innerHTML='';TABS.forEach(([k,label])=>tabs.appendChild(h('button',{class:k===cur?'sel':'',role:'tab','aria-selected':k===cur?'true':'false',onclick:()=>{cur=k;drawTabs();drawPane()}},[label])))}
-  function drawPane(){pane.innerHTML='';({general:generalTab,event:eventTab,google:googleTab,backup:backupTab})[cur](pane)}
+  function drawPane(){pane.innerHTML='';({general:generalTab,event:eventTab,google:googleTab,backup:backupTab})[cur](pane);layoutSegs(pane)}
   // 값이 바뀌면 바로 저장·적용한다. 모달은 body 에 붙어 있어 render() 에 지워지지 않으므로 패널만 다시 그린다
   const apply=fn=>{fn();save();render();drawPane()};
   const seg=segControl;
@@ -1085,9 +1178,9 @@ function openSettings(tab){
     h('div',{class:'sbody'},[tabs,pane])
   ]);
   drawTabs();drawPane();onGoogleChange=drawPane;
-  ov.appendChild(md);document.body.appendChild(ov);
+  openSheet(ov,md,close);layoutSegs(md);
   const onKey=(e)=>{if(e.key==='Escape')close()};document.addEventListener('keydown',onKey);
-  function close(){ov.remove();document.removeEventListener('keydown',onKey);onGoogleChange=null}
+  function close(){dismissSheet(ov,md);document.removeEventListener('keydown',onKey);onGoogleChange=null}
 }
 
 /* toast */
@@ -1104,4 +1197,8 @@ render();
 googleAutoReconnect(); // 이전 연결 기록이 있으면 조용히 재연결
 // OS 테마가 바뀌면 다시 그려서 라벨 변형색 등이 새 팔레트를 따르게
 matchMedia('(prefers-color-scheme: dark)').addEventListener('change',()=>{if(!S.settings.theme||S.settings.theme==='system')render()});
+setInterval(()=>{ // 현재 시각 선·pill 위치 갱신 (재렌더 없이)
+  const nm=new Date(),m=nm.getHours()*60+nm.getMinutes();
+  document.querySelectorAll('.wgrid[data-h0]').forEach(g=>{const t=`calc(var(--px) * ${(m-Number(g.dataset.h0)*60)/60})`;g.querySelectorAll('.nowline,.nowpill').forEach(el=>el.style.top=t);const p=g.querySelector('.nowpill');if(p)p.textContent=pad(nm.getHours())+':'+pad(nm.getMinutes())});
+},60000);
 })();
