@@ -123,8 +123,11 @@ const gEventUrl=id=>EV_BASE+'/'+encodeURIComponent(id);
 const NO_WRITE_MSG='일정 편집 권한이 없어요. 설정 > 구글 탭에서 다시 연결해 권한을 허용하세요.';
 const G={status:'off',token:null,expiresAt:0,email:'',events:[],anchor:null,loading:null,syncedAt:null,error:'',note:'',canWrite:true}; // status: off | connecting | on | expired. canWrite: 토큰에 calendar.events 권한이 있는지
 const GLINK_KEY='routine-cal-google-linked'; // "연결한 적 있음" 플래그만 저장 (토큰은 절대 저장하지 않음). 로드 시 조용한 재연결 시도의 근거
+const GHINT_KEY='routine-cal-google-hint';   // 마지막으로 연결한 계정 이메일(토큰 아님). 재연결 때 GIS hint 로 넘겨 계정 선택 화면을 건너뛴다
 const isLinked=()=>{try{return localStorage.getItem(GLINK_KEY)==='1'}catch(e){return false}};
-const setLinked=on=>{try{on?localStorage.setItem(GLINK_KEY,'1'):localStorage.removeItem(GLINK_KEY)}catch(e){}};
+const getHint=()=>{try{return localStorage.getItem(GHINT_KEY)||''}catch(e){return ''}};
+const setLinked=(on,email)=>{try{if(on){localStorage.setItem(GLINK_KEY,'1');if(email)localStorage.setItem(GHINT_KEY,email)}else{localStorage.removeItem(GLINK_KEY);localStorage.removeItem(GHINT_KEY)}}catch(e){}};
+const glog=(...a)=>{try{console.info('[gcal]',...a)}catch(e){}}; // 연결 흐름 추적용 콘솔 로그 (호출 여부·순서·응답 error 값)
 const googleClientId=()=>window.GOOGLE_CLIENT_ID||''; // config.js 의 var GOOGLE_CLIENT_ID
 let onGoogleChange=null; // 설정 모달 구글 탭이 열려 있으면 패널 다시 그리기
 const notifyGoogle=()=>{render();if(onGoogleChange)onGoogleChange()};
@@ -135,39 +138,55 @@ function loadGis(){ // GIS 스크립트는 연결을 시도할 때만 로드 (�
   return gisPromise;
 }
 async function googleConnect(opts){
-  const silent=!!(opts&&opts.silent); // 페이지 로드 시 자동 재연결: 실패해도 토스트 대신 탭에 "다시 연결" 안내만
+  // silent: 페이지 로드 시 자동 재연결. prompt:'none' 으로 어떤 UI(계정 선택·동의 팝업)도 띄우지 않고, 실패하면 미연결(expired) + "다시 연결" 버튼만 보여준다.
+  // 수동 연결은 prompt:'' (이미 동의한 계정이면 UI 없이, 아니면 동의 화면). 둘 다 마지막 계정 이메일을 hint 로 넘겨 계정 선택 화면을 건너뛴다
+  const silent=!!(opts&&opts.silent);
   if(!googleClientId()){if(!silent)toast('config.js 에 GOOGLE_CLIENT_ID 가 없어요');return}
-  if(G.status==='connecting')return;
+  if(G.status==='connecting'){glog('connect ignored: already connecting');return}
   const prev=G.status;
+  const hint=getHint();
+  glog(silent?'auto-reconnect: start':'connect: start',{prevStatus:prev,keepLogin:cfg('googleKeepLogin'),linked:isLinked(),hint:hint||null,gisLoaded:!!(window.google&&google.accounts&&google.accounts.oauth2)});
   G.status='connecting';G.error='';if(onGoogleChange)onGoogleChange();
   try{
     await loadGis();
+    const req=Object.assign({prompt:silent?'none':''},hint?{hint}:{});
+    glog('GIS ready → requestAccessToken',req);
     const tok=await new Promise((res,rej)=>{
       const tc=google.accounts.oauth2.initTokenClient({client_id:googleClientId(),scope:GOOGLE_SCOPE,
-        callback:r=>r&&r.access_token?res(r):rej(new Error(r&&r.error?String(r.error):'연결이 취소됐어요')),
-        error_callback:e=>rej(new Error(e&&e.type==='popup_closed'?'연결 창이 닫혔어요':e&&e.type==='popup_failed_to_open'?'브라우저가 팝업을 막았어요':(e&&e.message)||'연결에 실패했어요'))});
-      tc.requestAccessToken({prompt:''}); // 이미 동의한 계정이면 계정 선택·동의 화면 없이 토큰만 받는다
+        callback:r=>{
+          glog('token callback',r&&r.error?{error:r.error,error_description:r.error_description||null,error_subtype:r.error_subtype||null}:{ok:true,scope:r&&r.scope,expires_in:r&&r.expires_in});
+          r&&r.access_token?res(r):rej(new Error(r&&r.error?String(r.error):'연결이 취소됐어요'));
+        },
+        error_callback:e=>{
+          glog('token error_callback',{type:e&&e.type,message:e&&e.message});
+          rej(new Error(e&&e.type==='popup_closed'?'연결 창이 닫혔어요':e&&e.type==='popup_failed_to_open'?'브라우저가 팝업을 막았어요':(e&&e.message)||(e&&e.type)||'연결에 실패했어요'));
+        }});
+      tc.requestAccessToken(req);
     });
     G.token=tok.access_token;G.expiresAt=Date.now()+(Number(tok.expires_in)||3600)*1000;G.status='on';G.note='';
     // 허용된 스코프 확인: 예전(readonly) 동의만 있거나 사용자가 체크를 풀면 쓰기 불가 → 탭에 재연결 안내
     G.canWrite=!tok.scope||/auth\/calendar\.events(\s|$)|auth\/calendar(\s|$)/.test(tok.scope);
     if(!G.canWrite)G.note='일정 편집 권한이 없어요(읽기 전용으로 연결됨). 다시 연결해서 "Google 캘린더 일정 보기·수정" 권한을 허용하세요.';
     const cal=await gapiFetch('https://www.googleapis.com/calendar/v3/calendars/primary'); // primary 캘린더 id = 계정 이메일
-    G.email=cal.id||'';G.anchor=null;G.events=[];setLinked(true);
+    G.email=cal.id||'';G.anchor=null;G.events=[];setLinked(true,G.email);
+    glog(silent?'auto-reconnect: ok':'connect: ok',{email:G.email,canWrite:G.canWrite});
     toast(silent?`Google 다시 연결됨: ${G.email}`:`Google 연결됨: ${G.email}`);
   }catch(e){
     const msg=e&&e.message?e.message:String(e);
+    glog(silent?'auto-reconnect: failed':'connect: failed',msg);
     if(silent&&!G.token){
+      // 자동 팝업으로 넘어가지 않는다. 미연결로 두고 탭에서 "다시 연결" 만 제공
       G.status='expired';G.error='';
-      G.note=`이전에 연결한 기록이 있어 자동으로 다시 연결하려 했지만 실패했어요 (${msg}). 다시 연결을 누르세요. 브라우저가 팝업을 막은 거라면 이 사이트의 팝업을 허용하면 다음부터는 자동으로 이어져요.`;
+      G.note=`이전에 연결한 기록이 있어 조용히 다시 연결하려 했지만 실패했어요 (${msg}). 다시 연결을 누르세요. Chrome 이 서드파티 쿠키나 팝업을 막고 있으면 아래 안내대로 허용한 뒤 새로고침하면 자동으로 이어져요.`;
     }else{
       G.status=G.token?'on':(prev==='expired'?'expired':'off');G.error=msg;toast('Google 연결 실패: '+msg);
     }
   }
   notifyGoogle();
 }
-function googleAutoReconnect(){ // 페이지 로드 시: '로그인 유지' 가 켜져 있고 연결 플래그가 있으면 prompt:'' 로 조용히 재연결 시도
-  if(!cfg('googleKeepLogin')||!isLinked()||!googleClientId())return; // 로그인 유지를 끄면 새로고침 시 미연결
+function googleAutoReconnect(){ // 페이지 로드 시: '로그인 유지' 가 켜져 있고 연결 플래그가 있으면 prompt:'none' 으로 조용히 재연결 시도 (UI 없음)
+  const why=!googleClientId()?'no client id':!cfg('googleKeepLogin')?'keep-login off':!isLinked()?'not linked before':null;
+  if(why){glog('auto-reconnect: skipped',why);return} // 로그인 유지를 끄면 새로고침 시 미연결
   googleConnect({silent:true});
 }
 function googleDisconnect(){
@@ -974,7 +993,8 @@ function openSettings(tab){
       el.appendChild(h('div',{class:'frow'},[h('button',{class:'primary',onclick:googleConnect},[st==='expired'?'다시 연결':'Google 연결'])]));
       if(G.error)el.appendChild(h('p',{class:'hint danger'},[G.error]));
     }
-    el.appendChild(h('p',{class:'hint'},['연결하면 약속이 구글 캘린더(primary)에 바로 저장·수정·삭제되고, 표시 중인 달 ±1개월 범위를 읽어 월간·주간·일간에 점선 테두리로 보여줘요. 반복 일정은 이 일정만 편집돼요. 토큰은 메모리에만 두고 저장하지 않아요. 연결한 적이 있으면 새로고침할 때 팝업 없이 조용히 다시 연결을 시도하는데, 브라우저가 팝업을 막으면 실패하니 이 사이트의 팝업을 허용해 두세요.']));
+    el.appendChild(h('p',{class:'hint'},['연결하면 약속이 구글 캘린더(primary)에 바로 저장·수정·삭제되고, 표시 중인 달 ±1개월 범위를 읽어 월간·주간·일간에 보여줘요. 반복 일정은 이 일정만 편집돼요. 토큰은 메모리에만 두고 저장하지 않아요. 연결한 적이 있으면 새로고침할 때 화면 없이 조용히 다시 연결을 시도하고, 실패하면 미연결 상태로 두고 "다시 연결" 만 보여줘요.']));
+    el.appendChild(h('p',{class:'hint'},['Chrome 이 서드파티 쿠키를 차단하면 조용한 재연결이 실패해요. 주소창 오른쪽의 쿠키(눈 모양) 아이콘 → 서드파티 쿠키 허용, 또는 chrome://settings/content/siteData 에서 이 사이트를 "쿠키 허용" 에 추가하세요. 팝업 차단도 같은 곳(chrome://settings/content/popups)에서 허용하면 돼요.']));
   }
   const md=h('div',{class:'md settings',role:'dialog','aria-label':'설정'},[
     h('div',{class:'shead'},[h('h3',null,['설정']),h('button',{class:'quiet',title:'닫기',onclick:()=>close()},['닫기'])]),

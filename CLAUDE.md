@@ -110,7 +110,8 @@
 ## 구글 캘린더 (약속 저장소)
 
 - 설정 모달 구글 탭: `Google 연결` → GIS 팝업(스코프 `calendar.events`; 예전 readonly 동의 사용자는 재동의 필요, 토큰의 `scope` 에 없으면 `G.canWrite=false` 로 두고 탭에 "다시 연결(권한 허용)") → 토큰을 `G.token`(메모리)에만 둔다. **localStorage 에 토큰 저장 금지.** `연결 해제` 는 토큰 revoke + 구글 이벤트만 제거(로컬 데이터 그대로)
-- 연결 여부 플래그만 별도 키 `routine-cal-google-linked`(값 `'1'`)에 둔다(백업 데이터 키와 분리). 페이지 로드 시 설정 `googleKeepLogin`(구글 탭 "로그인 유지", 기본 true)이 켜져 있고 플래그가 있으면 `googleAutoReconnect()` → `googleConnect({silent:true})` 가 `requestAccessToken({prompt:''})` 로 조용히 재연결한다. 실패하면 `expired` 상태 + `G.note` 로 탭에 "다시 연결" 을 보여주고 플래그는 유지(해제 시 삭제). GIS 토큰 흐름은 팝업을 쓰므로 브라우저가 사용자 동작 없는 팝업을 막으면 자동 재연결이 실패한다 — 사이트 팝업 허용이 필요
+- 연결 여부 플래그 `routine-cal-google-linked`(값 `'1'`)와 마지막 계정 이메일 `routine-cal-google-hint`(토큰 아님)를 별도 키에 둔다(백업 데이터 키와 분리). 페이지 로드 시 설정 `googleKeepLogin`(구글 탭 "로그인 유지", 기본 true)이 켜져 있고 플래그가 있으면 `googleAutoReconnect()` → `googleConnect({silent:true})` 가 `requestAccessToken({prompt:'none', hint:이메일})` 로 **UI 없이** 재연결한다. 실패(`consent_required`, `interaction_required`, 쿠키·팝업 차단 등)하면 자동으로 팝업을 띄우지 않고 `expired` 상태 + `G.note` 로 탭에 "다시 연결" 만 보여주며 플래그는 유지(해제 시 둘 다 삭제). 수동 연결은 `prompt:''` + hint. 흐름은 `console.info('[gcal]', …)` 로 남긴다(시작·GIS 준비·요청 옵션·콜백 응답의 error 값)
+- Chrome 이 서드파티 쿠키를 차단하면 조용한 재연결이 실패할 수 있어 구글 탭에 허용 안내를 둔다
 - 상태 `G.status`: `off` | `connecting` | `on` | `expired`. API 가 401 을 주거나 `expires_in` 이 지나면 `expired` 로 바꾸고 이벤트를 비운 뒤 탭에 "다시 연결" 을 보여준다
 - 계정 이메일은 `calendars/primary` 의 `id` 로 얻는다(추가 스코프 없음)
 - 조회 범위: 표시 중인 달(월간은 `view.ym`, 주간은 주 시작일의 달) ±1개월 = `[전달 1일, 다다음달 1일)`. `ensureGoogleEvents(ym)` 이 같은 달이면 캐시를 쓰고 달이 바뀌면 다시 조회하며, 끝나면 `render()`
