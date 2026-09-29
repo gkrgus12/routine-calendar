@@ -7,7 +7,7 @@
 - 바닐라 JS (ES2015+), 프레임워크·번들러·빌드 도구 없음
 - 파일: `index.html`(마크업), `styles.css`(스타일), `app.js`(전체 로직, IIFE 하나), `config.js`(공개 설정: Google 클라이언트 ID)
 - 저장소는 `localStorage` 한 키뿐. 서버·백엔드 없음
-- Google Calendar 읽기 연동(선택): `config.js` 의 `var GOOGLE_CLIENT_ID` + Google Identity Services 토큰 클라이언트 + Calendar API v3 를 브라우저에서 직접 호출. GIS 스크립트는 연결을 시도할 때만 로드
+- Google Calendar 연동(선택): `config.js` 의 `var GOOGLE_CLIENT_ID` + Google Identity Services 토큰 클라이언트 + Calendar API v3 를 브라우저에서 직접 호출(읽기 + 약속 쓰기). GIS 스크립트는 연결을 시도할 때만 로드
 - `manifest.json` + `icon.svg` 로 PWA(standalone) 설치 가능. 서비스 워커는 없음
 - 폰트는 시스템 폰트 스택(-apple-system / Segoe UI / Apple SD Gothic Neo / Malgun Gothic …). 외부 CDN 없음
 - UI는 iOS 느낌: `styles.css` 상단의 토큰으로 관리. 사이드바·상단바·모달·토스트·라벨 팝오버는 반투명 유리(`--glass`, backdrop-filter), 배경은 그라데이션. 캘린더 격자·표·루틴/약속 블록은 불투명(`--panel`, `--grid-line`) — 페이지 색 구분이 기능이라 투명도를 주지 않는다. 라이트/다크는 `prefers-color-scheme` 과 `:root[data-theme]` 둘 다 지원
@@ -105,17 +105,20 @@
   - 이름 확정(Enter/blur/드래그 전 settle)은 형제 전체의 이름을 바꾼다. 시간은 각자 독립이라 표·드래그로 한 요일 시간을 바꾸면 그 블록은 형제에서 빠진다(체크 해제로 보임)
   - ✕ 삭제는 현재 블록만
 
-## 구글 캘린더 (읽기 전용)
+## 구글 캘린더 (약속 저장소)
 
-- 설정 모달 구글 탭: `Google 연결` → GIS 팝업(스코프 `calendar.readonly`) → 토큰을 `G.token`(메모리)에만 둔다. **localStorage 에 토큰 저장 금지.** `연결 해제` 는 토큰 revoke + 구글 이벤트만 제거(로컬 데이터 그대로)
+- 설정 모달 구글 탭: `Google 연결` → GIS 팝업(스코프 `calendar.events`; 예전 readonly 동의 사용자는 재동의 필요, 토큰의 `scope` 에 없으면 `G.canWrite=false` 로 두고 탭에 "다시 연결(권한 허용)") → 토큰을 `G.token`(메모리)에만 둔다. **localStorage 에 토큰 저장 금지.** `연결 해제` 는 토큰 revoke + 구글 이벤트만 제거(로컬 데이터 그대로)
 - 연결 여부 플래그만 별도 키 `routine-cal-google-linked`(값 `'1'`)에 둔다(백업 데이터 키와 분리). 페이지 로드 시 설정 `googleKeepLogin`(구글 탭 "로그인 유지", 기본 true)이 켜져 있고 플래그가 있으면 `googleAutoReconnect()` → `googleConnect({silent:true})` 가 `requestAccessToken({prompt:''})` 로 조용히 재연결한다. 실패하면 `expired` 상태 + `G.note` 로 탭에 "다시 연결" 을 보여주고 플래그는 유지(해제 시 삭제). GIS 토큰 흐름은 팝업을 쓰므로 브라우저가 사용자 동작 없는 팝업을 막으면 자동 재연결이 실패한다 — 사이트 팝업 허용이 필요
 - 상태 `G.status`: `off` | `connecting` | `on` | `expired`. API 가 401 을 주거나 `expires_in` 이 지나면 `expired` 로 바꾸고 이벤트를 비운 뒤 탭에 "다시 연결" 을 보여준다
 - 계정 이메일은 `calendars/primary` 의 `id` 로 얻는다(추가 스코프 없음)
 - 조회 범위: 표시 중인 달(월간은 `view.ym`, 주간은 주 시작일의 달) ±1개월 = `[전달 1일, 다다음달 1일)`. `ensureGoogleEvents(ym)` 이 같은 달이면 캐시를 쓰고 달이 바뀌면 다시 조회하며, 끝나면 `render()`
 - `toLocalEvent()` 가 구글 이벤트를 로컬 약속 모양으로 바꾼다(`id:'g:…'`, `google:true`, `allDay`). 종일은 `end.date` exclusive 라 하루 뺀다. 자정을 넘는 시간 이벤트는 시작한 날 24:00 까지로 자른다. `cancelled` 는 버린다
-- 표시: `indexEvents()` 가 로컬 약속과 구글 이벤트를 함께 날짜별로 묶는다(종일 먼저). 월간은 `.ev.g`(점선), 종일은 `.ev.g.allday` 한 줄. 주간은 `.blk.evb.g`(점선 테두리), 종일은 헤더 아래 `.wad` 줄. 클릭하면 "구글에서 편집" 안내 토스트만 (`openEvent` 초입에서 가드)
+- **약속 저장소**: 연결돼 있으면 약속 추가·수정·삭제 폼(`openEvent`)이 primary 캘린더에 직접 `POST` / `PATCH` / `DELETE` 한다(`gapiCall`, `toGoogleBody`). 성공하면 `G.anchor=null` 로 해당 월을 다시 조회. 실패하면 토스트에 "상태코드 메시지" 를 보여주고 로컬 상태는 바꾸지 않는다. 401 은 만료 처리(재연결 유도), 403(권한 부족) 은 `canWrite=false`
+  - 폼의 시작일~종료일은 구글에서는 연속 구간(시작일+시작시간 ~ 종료일+끝시간)이 된다. 종일 이벤트는 폼에 00:00~23:59 로 보이며 그대로 두고 저장하면 종일로 유지(time 입력은 24:00 을 못 보여줌). 자정에 끝나는 이벤트는 다음날 00:00 으로 표기. 반복 일정은 `singleEvents` 인스턴스 id 로 PATCH/DELETE 하므로 "이 일정만" 바뀐다
+  - 로컬 `S.events` 는 미연결 상태에서만 새로 만들 수 있다. 연결 중에 남아 있는 로컬 약속은 "임시" 태그(`.tmp`)로 표시되고 편집·삭제만 된다. 구글 탭의 "로컬 약속 N개 구글로 옮기기"(`migrateLocalEvents`) 는 날짜마다 이벤트를 하나씩 만들고 성공한 것만 로컬에서 지운다. JSON 백업에는 로컬 약속만 들어간다(구글 이벤트는 `S` 에 없음)
+- 표시: `toLocalEvents()` 가 구글 이벤트를 화면용 조각으로 바꾼다(여러 날에 걸친 시간 이벤트는 날짜별 조각, `gid`/`raw` 로 원본 참조). `indexEvents()` 가 로컬 약속과 구글 조각을 함께 날짜별로 묶는다(종일 먼저). 월간은 `.ev.g`(점선), 종일은 `.ev.g.allday` 한 줄. 주간·일간은 `.blk.evb.g`(점선 테두리), 종일은 헤더 아래 `.wad` 줄. 클릭하면 편집 모달(`draftFromGoogle(raw)` 로 실제 시작·끝을 채움)
 - 충돌: 시간 있는 구글 이벤트는 로컬 약속과 같은 규칙(`eventConflicts`)으로 활성 루틴과 검사해 경고 점·경고색. 종일 이벤트는 검사하지 않는다
-- 범위 밖: 쓰기, 다른 캘린더 선택, 반복 이벤트 편집
+- 범위 밖: 루틴 업로드, 다른 캘린더 선택, 참석자·알림·장소, 반복 규칙 편집
 
 ## 백업 (JSON 내보내기/가져오기)
 

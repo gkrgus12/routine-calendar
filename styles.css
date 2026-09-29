@@ -133,6 +133,8 @@ input:focus,select:focus,button:focus-visible{outline:2px solid var(--accent);ou
 /* 구글 이벤트: 점선 테두리로 로컬 약속과 구분. 종일은 날짜 상단 한 줄 */
 .ev.g{background:transparent;border:1px dashed var(--muted);padding-top:1px;padding-bottom:1px}
 .ev.g.allday{background:var(--field);border-style:dashed;justify-content:center;font-weight:500}
+.ev .tag{flex:none;font-size:10px;line-height:1.4;padding:0 4px;border-radius:4px;background:var(--warn-bg);color:var(--warn);font-weight:600} /* 임시(로컬) 약속 */
+.ev.tmp{border:1px dotted var(--muted)}
 
 /* ---------- 주간 (불투명 격자·블록) ---------- */
 .wwrap{overflow:auto}
@@ -150,6 +152,7 @@ input:focus,select:focus,button:focus-visible{outline:2px solid var(--accent);ou
 .blk.evb{background:transparent;color:var(--ink);border:1.5px solid var(--ink);opacity:1;left:auto;width:calc(100% - 6px);z-index:2;background:var(--panel)}
 .blk.evb.cf{border-color:var(--warn);color:var(--warn)}
 .blk.evb.g{border-style:dashed}
+.blk.evb.tmp{border-style:dotted}
 .wgrid .wad{padding:3px 4px;border-bottom:1px solid var(--grid-line);border-left:1px solid var(--grid-line);min-height:24px;font-size:11px}
 .wgrid .wad.lab{border-left:0;border-bottom:0;color:var(--muted);text-align:right;padding-right:6px;font-size:11px}
 .wgrid .wad .ev{margin:1px 0}
