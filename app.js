@@ -31,13 +31,16 @@ function applyTheme(){const t=S.settings.theme;if(t==='light'||t==='dark')docume
 applyTheme();
 // 설정 기본값. 저장값에 없는 키는 기본값으로 읽는다(cfg). weekStart: 'mon'|'sun' (표시 순서만 바뀌고 데이터의 day 는 항상 0=월…6=일),
 // dayStart/dayEnd: 주간 뷰·편집 그리드가 보여줄 시간 범위(시). 범위 밖 루틴은 잘려 보일 뿐 데이터는 그대로
-const SETTINGS_DEFAULTS={defaultStart:'10:00',defaultDur:60,theme:'system',weekStart:'mon',dayStart:6,dayEnd:24};
+const SETTINGS_DEFAULTS={defaultStart:'10:00',defaultDur:60,theme:'system',weekStart:'mon',dayStart:6,dayEnd:24,googleKeepLogin:true};
 const cfg=k=>S.settings[k]===undefined?SETTINGS_DEFAULTS[k]:S.settings[k];
 const dayOrder=()=>cfg('weekStart')==='sun'?[6,0,1,2,3,4,5]:[0,1,2,3,4,5,6]; // 요일 표시 순서
 const dayPos=d=>dayOrder().indexOf(d);
 
 const today=ymd(new Date());
-let view={type:'month',ym:today.slice(0,7),pageId:null,weekStart:weekStartOf(new Date())};
+const VIEW_KEY='routine-cal-view'; // 마지막 캘린더 뷰(day|week|month). UI 상태라 백업 데이터 키와 분리
+const lastCalView=()=>{try{const v=localStorage.getItem(VIEW_KEY);return ['day','week','month'].includes(v)?v:'month'}catch(e){return 'month'}};
+let view={type:lastCalView(),ym:today.slice(0,7),pageId:null,weekStart:weekStartOf(new Date()),day:today};
+function setCalView(t){view.type=t;try{localStorage.setItem(VIEW_KEY,t)}catch(e){}render()}
 // 설정의 주 시작 요일(월/일)에 맞춘, d 가 속한 주의 첫날
 function weekStartOf(d){const x=new Date(d);const back=cfg('weekStart')==='sun'?x.getDay():wd(x);x.setDate(x.getDate()-back);x.setHours(0,0,0,0);return x}
 
@@ -83,6 +86,7 @@ function validateBackup(obj){
     const settings={defaultStart:st.defaultStart,defaultDur:st.defaultDur};
     if(['system','light','dark'].includes(st.theme))settings.theme=st.theme;
     if(st.weekStart!==undefined){if(!['mon','sun'].includes(st.weekStart))throw new Error('settings: weekStart 는 mon 또는 sun 이에요');settings.weekStart=st.weekStart}
+    if(st.googleKeepLogin!==undefined){if(typeof st.googleKeepLogin!=='boolean')throw new Error('settings: googleKeepLogin 은 true/false 여야 해요');settings.googleKeepLogin=st.googleKeepLogin}
     if(st.dayStart!==undefined||st.dayEnd!==undefined){
       const a=st.dayStart===undefined?SETTINGS_DEFAULTS.dayStart:st.dayStart,b=st.dayEnd===undefined?SETTINGS_DEFAULTS.dayEnd:st.dayEnd;
       if(!Number.isInteger(a)||!Number.isInteger(b)||a<0||b>24||a>=b)throw new Error('settings: dayStart/dayEnd 는 0~24 정수이고 dayStart < dayEnd 여야 해요');
@@ -153,8 +157,8 @@ async function googleConnect(opts){
   }
   notifyGoogle();
 }
-function googleAutoReconnect(){ // 페이지 로드 시: 연결 플래그가 있으면 prompt:'' 로 조용히 재연결 시도
-  if(!isLinked()||!googleClientId())return;
+function googleAutoReconnect(){ // 페이지 로드 시: '로그인 유지' 가 켜져 있고 연결 플래그가 있으면 prompt:'' 로 조용히 재연결 시도
+  if(!cfg('googleKeepLogin')||!isLinked()||!googleClientId())return; // 로그인 유지를 끄면 새로고침 시 미연결
   googleConnect({silent:true});
 }
 function googleDisconnect(){
@@ -278,14 +282,19 @@ function blockStyle(p,label,withInk){
   return `background:hsl(${hh.toFixed(1)} ${(s2*100).toFixed(1)}% ${(l2*100).toFixed(1)}%)`+(withInk!==false&&l2>.62?';color:#14181d':'');
 }
 
+// iOS 세그먼트 컨트롤 (상단바 뷰 전환과 설정 모달에서 공용)
+function segControl(name,options,value,onPick){const el=h('div',{class:'seg',role:'group','aria-label':name});options.forEach(([k,label])=>el.appendChild(h('button',{class:value===k?'sel':'','aria-pressed':value===k?'true':'false',onclick:()=>onPick(k)},[label])));return el}
+const calSeg=()=>segControl('보기',[['day','일간'],['week','주간'],['month','월간']],view.type,setCalView);
+const isCalView=()=>['day','week','month'].includes(view.type);
+
 function renderSide(){
   const side=h('div',{class:'side'});
-  side.appendChild(h('h1',null,['루틴 캘린더']));
+  const snav=h('div',{class:'snav'}); // 스크롤되는 부분. 아래 .foot(설정)은 항상 보임
+  snav.appendChild(h('h1',null,['루틴 캘린더']));
   const nav=h('ul',{class:'nav'});
-  nav.appendChild(h('li',{class:view.type==='month'?'sel':'',onclick:()=>{view.type='month';render()}},[h('span',{class:'nm'},['월간 · 약속'])]));
-  nav.appendChild(h('li',{class:view.type==='week'?'sel':'',onclick:()=>{view.type='week';view.weekStart=weekStartOf(new Date());render()}},[h('span',{class:'nm'},['이번 주 · 활성 루틴'])]));
-  side.appendChild(nav);
-  side.appendChild(h('div',{class:'sec'},['루틴 페이지']));
+  nav.appendChild(h('li',{class:isCalView()?'sel':'',onclick:()=>setCalView(lastCalView())},[h('span',{class:'nm'},['캘린더'])]));
+  snav.appendChild(nav);
+  snav.appendChild(h('div',{class:'sec'},['루틴 페이지']));
   const pl=h('ul',{class:'nav'});
   if(!S.pages.length) pl.appendChild(h('li',{style:'color:var(--muted);cursor:default'},['아직 페이지가 없어요']));
   S.pages.forEach((p,i)=>{
@@ -296,8 +305,10 @@ function renderSide(){
     ]);
     pl.appendChild(li);
   });
-  side.appendChild(pl);
-  side.appendChild(h('button',{class:'add',onclick:addPage},['+ 새 루틴 페이지']));
+  snav.appendChild(pl);
+  snav.appendChild(h('button',{class:'add',onclick:addPage},['+ 새 루틴 페이지']));
+  side.appendChild(snav);
+  side.appendChild(h('div',{class:'foot'},[h('button',{title:'설정',onclick:()=>openSettings()},['⚙ 설정'])]));
   return side;
 }
 function setTheme(k){S.settings.theme=k;save();applyTheme();render()}
@@ -323,6 +334,7 @@ function renderMain(){
   const main=h('div',{class:'main'});
   if(view.type==='month')renderMonth(main);
   else if(view.type==='week')renderWeek(main);
+  else if(view.type==='day')renderDay(main);
   else renderPage(main);
   return main;
 }
@@ -337,7 +349,7 @@ function renderMonth(main){
     h('button',{class:'quiet',onclick:()=>{shiftMonth(1)}},['›']),
     h('button',{class:'quiet',onclick:()=>{view.ym=today.slice(0,7);render()}},['오늘']),
     h('span',{class:'sp'}),
-    h('button',{class:'quiet',title:'설정',onclick:()=>openSettings()},['⚙ 설정']),
+    calSeg(),
     h('button',{class:'primary',onclick:()=>openEvent(null,today)},['+ 약속'])
   ]);
   main.appendChild(bar);
@@ -384,24 +396,49 @@ function renderWeek(main){
     h('button',{class:'quiet',onclick:()=>{view.weekStart.setDate(view.weekStart.getDate()+7);render()}},['›']),
     h('button',{class:'quiet',onclick:()=>{view.weekStart=weekStartOf(new Date());render()}},['이번 주']),
     h('span',{class:'sp'}),
-    h('button',{class:'quiet',title:'설정',onclick:()=>openSettings()},['⚙ 설정']),
+    calSeg(),
   ]);
   main.appendChild(bar);
+  const dates=[];for(let i=0;i<7;i++){const d=new Date(ws);d.setDate(ws.getDate()+i);dates.push(d)}
+  main.appendChild(timeGridBody(dates));
+}
+
+/* day: 주간과 같은 시간축에 컬럼 하나 (드래그 편집 없음) */
+function renderDay(main){
+  const d=parse(view.day);
+  ensureGoogleEvents(view.day.slice(0,7));
+  const bar=h('div',{class:'bar'},[
+    h('button',{class:'quiet',onclick:()=>shiftDay(-1)},['‹']),
+    h('h2',null,[`${d.getMonth()+1}월 ${d.getDate()}일 (${DAYS[wd(d)]})`]),
+    h('button',{class:'quiet',onclick:()=>shiftDay(1)},['›']),
+    h('button',{class:'quiet',onclick:()=>{view.day=today;render()}},['오늘']),
+    h('span',{class:'sp'}),
+    calSeg(),
+    h('button',{class:'primary',onclick:()=>openEvent(null,view.day)},['+ 약속'])
+  ]);
+  main.appendChild(bar);
+  main.appendChild(timeGridBody([d]));
+}
+function shiftDay(n){const d=parse(view.day);d.setDate(d.getDate()+n);view.day=ymd(d);render()}
+
+// 시간축 그리드 본문 (주간 7열 / 일간 1열 공용): 범례 + 종일 줄 + 활성 루틴 블록 + 약속 블록
+function timeGridBody(dates){
   const body=h('div',{class:'body'});
   const act=S.pages.filter(p=>p.active);
-  if(!act.length){body.appendChild(h('div',{class:'empty'},['활성화된 루틴 페이지가 없어요. 왼쪽 목록에서 스위치를 켜면 여기 표시됩니다.']));main.appendChild(body);return}
+  if(!act.length){body.appendChild(h('div',{class:'empty'},['활성화된 루틴 페이지가 없어요. 왼쪽 목록에서 스위치를 켜면 여기 표시됩니다.']));return body}
   const lg=h('div',{class:'legend'});
   act.forEach(p=>lg.appendChild(h('span',null,[h('i',{style:'background:'+PCOL[p.color%PCOL.length]}),p.name])));
   lg.appendChild(h('span',null,[h('i',{style:'border:1.5px solid var(--ink);background:transparent'}),'약속']));
   if(G.status==='on')lg.appendChild(h('span',null,[h('i',{style:'border:1.5px dashed var(--ink);background:transparent'}),'구글']));
   body.appendChild(lg);
   const H0=cfg('dayStart'),H1=cfg('dayEnd'),PX=44;const height=(H1-H0)*PX;
+  const n=dates.length;
   const wrap=h('div',{class:'wwrap'});
-  const grid=h('div',{class:'wgrid'});
+  const grid=h('div',{class:'wgrid'+(n===1?' dgrid':''),style:`grid-template-columns:48px repeat(${n},1fr)`});
   grid.appendChild(h('div',{class:'whd'},['']));
-  const dates=[];for(let i=0;i<7;i++){const d=new Date(ws);d.setDate(ws.getDate()+i);dates.push(d);grid.appendChild(h('div',{class:'whd'+(ymd(d)===today?' today':'')},[`${DAYS[wd(d)]} ${d.getDate()}`]))}
+  dates.forEach(d=>grid.appendChild(h('div',{class:'whd'+(ymd(d)===today?' today':'')},[`${DAYS[wd(d)]} ${d.getDate()}`])));
   const evIdx=indexEvents();
-  // 종일(구글) 이벤트 줄: 이 주에 하나라도 있으면 헤더 아래에 한 줄 추가
+  // 종일(구글) 이벤트 줄: 하나라도 있으면 헤더 아래에 한 줄 추가
   const adWeek=dates.map(d=>(evIdx[ymd(d)]||[]).filter(ev=>ev.allDay));
   if(adWeek.some(a=>a.length)){
     grid.appendChild(h('div',{class:'wad lab'},['종일']));
@@ -434,7 +471,8 @@ function renderWeek(main){
     });
     grid.appendChild(col);
   });
-  wrap.appendChild(grid);body.appendChild(wrap);main.appendChild(body);
+  wrap.appendChild(grid);body.appendChild(wrap);
+  return body;
 }
 
 // 같은 요일에서 겹치는 블록을 나란히 놓기 위한 열 배치 (구글 캘린더 방식).
@@ -463,7 +501,6 @@ function renderPage(main){
   const bar=h('div',{class:'bar'},[
     h('h2',null,['루틴 페이지']),
     h('span',{class:'sp'}),
-    h('button',{class:'quiet',title:'설정',onclick:()=>openSettings()},['⚙ 설정']),
     h('button',{class:p.active?'':'primary',onclick:()=>togglePage(p)},[p.active?'비활성화':'활성화']),
     h('button',{class:'quiet danger',onclick:()=>{if(confirm(`「${p.name}」 페이지를 삭제할까요?`)){S.pages=S.pages.filter(x=>x!==p);save();view.type='month';render()}}},['삭제'])
   ]);
@@ -725,12 +762,12 @@ function openSettings(tab){
   function drawPane(){pane.innerHTML='';({general:generalTab,event:eventTab,google:googleTab,backup:backupTab})[cur](pane)}
   // 값이 바뀌면 바로 저장·적용한다. 모달은 body 에 붙어 있어 render() 에 지워지지 않으므로 패널만 다시 그린다
   const apply=fn=>{fn();save();render();drawPane()};
-  const seg=(name,options,value,onPick)=>{const el=h('div',{class:'seg',role:'group','aria-label':name});options.forEach(([k,label])=>el.appendChild(h('button',{class:value===k?'sel':'','aria-pressed':value===k?'true':'false',onclick:()=>onPick(k)},[label])));return el};
+  const seg=segControl;
   function generalTab(el){
     el.appendChild(h('div',{class:'sect'},['테마']));
     el.appendChild(h('div',{class:'frow'},[seg('테마',[['system','시스템'],['light','라이트'],['dark','다크']],cfg('theme'),k=>apply(()=>{S.settings.theme=k;applyTheme()}))]));
     el.appendChild(h('div',{class:'sect'},['주 시작 요일']));
-    el.appendChild(h('div',{class:'frow'},[seg('주 시작 요일',[['mon','월요일'],['sun','일요일']],cfg('weekStart'),k=>apply(()=>{S.settings.weekStart=k;if(view.weekStart)view.weekStart=weekStartOf(view.weekStart)}))]));
+    el.appendChild(h('div',{class:'frow'},[seg('주 시작 요일',[['mon','월요일'],['sun','일요일']],cfg('weekStart'),k=>apply(()=>{S.settings.weekStart=k;if(view.weekStart){const mid=new Date(view.weekStart);mid.setDate(mid.getDate()+3);view.weekStart=weekStartOf(mid)}}))]));
     el.appendChild(h('p',{class:'hint'},['월간·주간·편집 그리드가 이 요일부터 시작해요.']));
     el.appendChild(h('div',{class:'sect'},['주간 뷰 시간 범위']));
     const a=h('input',{type:'number',min:'0',max:'23',step:'1',value:cfg('dayStart')}),b=h('input',{type:'number',min:'1',max:'24',step:'1',value:cfg('dayEnd')});
@@ -794,6 +831,8 @@ function openSettings(tab){
   function googleTab(el){
     el.appendChild(h('div',{class:'sect'},['Google Calendar (읽기 전용)']));
     if(!googleClientId()){el.appendChild(h('p',{class:'hint'},['config.js 에 GOOGLE_CLIENT_ID 를 넣으면 연결할 수 있어요.']));return}
+    // 로그인 유지: 켜져 있으면 로드 시 연결 플래그(토큰 아님)로 조용히 재연결. 끄면 새로고침 시 미연결
+    el.appendChild(h('label',{class:'chk'},[h('input',{type:'checkbox',...(cfg('googleKeepLogin')?{checked:''}:{}),onchange:(e)=>{S.settings.googleKeepLogin=e.target.checked;save();drawPane()}}),'로그인 유지 — 새로고침해도 팝업 없이 자동으로 다시 연결']));
     const st=G.status;
     if(st==='on'){
       el.appendChild(h('div',{class:'frow'},[h('span',null,['연결됨: ',h('b',null,[G.email||'(이메일 확인 불가)'])])]));

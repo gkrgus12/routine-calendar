@@ -78,8 +78,9 @@
 | `weekStart` | string | `"mon"` \| `"sun"`. 없으면 mon. 월간·주간·편집 그리드·표·요일 체크박스의 **표시 순서만** 바뀌고 데이터의 `day`(0=월)는 그대로 (`dayOrder()`, `dayPos()`, `weekStartOf()`) |
 | `dayStart` | number | 주간 뷰·편집 그리드가 보여줄 시작 시(0~23). 없으면 6 |
 | `dayEnd` | number | 끝 시(1~24, `dayStart` 보다 커야 함). 없으면 24. 범위 밖 루틴은 잘려 보이거나(일부) 그리드에서 안 보이지만(전부 밖) 데이터·표는 그대로 |
+| `googleKeepLogin` | boolean | 기본 true. 켜져 있으면 로드 시 구글 연결 플래그로 조용히 재연결. 끄면 새로고침 시 미연결 |
 
-저장값에 없는 설정 키는 `cfg(key)` 가 `SETTINGS_DEFAULTS` 로 채워 읽는다. 설정 모달(`openSettings(tab)`, 상단바 ⚙ 설정)은 좌측 탭 일반(테마·주 시작 요일·시간 범위) / 약속(기본 시작·길이) / 구글(연결·해제) / 백업 으로 나뉘고, 값은 바꾸는 즉시 `save()`+`render()` 된다(저장 버튼 없음).
+저장값에 없는 설정 키는 `cfg(key)` 가 `SETTINGS_DEFAULTS` 로 채워 읽는다. 설정 모달(`openSettings(tab)`, 사이드바 맨 아래 ⚙ 설정)은 좌측 탭 일반(테마·주 시작 요일·시간 범위) / 약속(기본 시작·길이) / 구글(연결·해제) / 백업 으로 나뉘고, 값은 바꾸는 즉시 `save()`+`render()` 된다(저장 버튼 없음).
 
 `load()` 는 저장값에 `pages` 와 `events` 가 있으면 그대로 쓰고, 아니면 빈 상태로 시작한다. 마이그레이션 로직은 없다.
 
@@ -107,7 +108,7 @@
 ## 구글 캘린더 (읽기 전용)
 
 - 설정 모달 구글 탭: `Google 연결` → GIS 팝업(스코프 `calendar.readonly`) → 토큰을 `G.token`(메모리)에만 둔다. **localStorage 에 토큰 저장 금지.** `연결 해제` 는 토큰 revoke + 구글 이벤트만 제거(로컬 데이터 그대로)
-- 연결 여부 플래그만 별도 키 `routine-cal-google-linked`(값 `'1'`)에 둔다(백업 데이터 키와 분리). 페이지 로드 시 플래그가 있으면 `googleAutoReconnect()` → `googleConnect({silent:true})` 가 `requestAccessToken({prompt:''})` 로 조용히 재연결한다. 실패하면 `expired` 상태 + `G.note` 로 탭에 "다시 연결" 을 보여주고 플래그는 유지(해제 시 삭제). GIS 토큰 흐름은 팝업을 쓰므로 브라우저가 사용자 동작 없는 팝업을 막으면 자동 재연결이 실패한다 — 사이트 팝업 허용이 필요
+- 연결 여부 플래그만 별도 키 `routine-cal-google-linked`(값 `'1'`)에 둔다(백업 데이터 키와 분리). 페이지 로드 시 설정 `googleKeepLogin`(구글 탭 "로그인 유지", 기본 true)이 켜져 있고 플래그가 있으면 `googleAutoReconnect()` → `googleConnect({silent:true})` 가 `requestAccessToken({prompt:''})` 로 조용히 재연결한다. 실패하면 `expired` 상태 + `G.note` 로 탭에 "다시 연결" 을 보여주고 플래그는 유지(해제 시 삭제). GIS 토큰 흐름은 팝업을 쓰므로 브라우저가 사용자 동작 없는 팝업을 막으면 자동 재연결이 실패한다 — 사이트 팝업 허용이 필요
 - 상태 `G.status`: `off` | `connecting` | `on` | `expired`. API 가 401 을 주거나 `expires_in` 이 지나면 `expired` 로 바꾸고 이벤트를 비운 뒤 탭에 "다시 연결" 을 보여준다
 - 계정 이메일은 `calendars/primary` 의 `id` 로 얻는다(추가 스코프 없음)
 - 조회 범위: 표시 중인 달(월간은 `view.ym`, 주간은 주 시작일의 달) ±1개월 = `[전달 1일, 다다음달 1일)`. `ensureGoogleEvents(ym)` 이 같은 달이면 캐시를 쓰고 달이 바뀌면 다시 조회하며, 끝나면 `render()`
@@ -118,7 +119,7 @@
 
 ## 백업 (JSON 내보내기/가져오기)
 
-- 설정 모달(상단바 ⚙ 설정, 모든 뷰) 의 백업 탭. 내보내기는 `routine-calendar-YYYY-MM-DD.json` 다운로드, 가져오기는 파일 선택 → 미리보기(페이지·루틴·약속 수) → 덮어쓰기 / 합치기
+- 설정 모달(사이드바 맨 아래 ⚙ 설정) 의 백업 탭. 내보내기는 `routine-calendar-YYYY-MM-DD.json` 다운로드, 가져오기는 파일 선택 → 미리보기(페이지·루틴·약속 수) → 덮어쓰기 / 합치기
 - 파일 형식: `{ version: 1, exportedAt: ISO 문자열, pages, events, settings }`. `version` 이 1이 아니면 거부
 - `validateBackup()` 은 모든 레코드를 엄격히 검사(id 문자열, day 0~6, HH:MM, YYYY-MM-DD, 같은 배열 안 id 중복 없음)하고 알려진 필드만 복사한 새 객체를 만든다. 실패하면 에러 토스트만 띄우고 기존 데이터는 그대로
 - 덮어쓰기: `confirm` 후 `S` 전체 교체(설정·테마 포함). 합치기(`mergeBackup`): id 기준 중복 제거 — 새 id 의 페이지·약속만 추가하고, 같은 id 페이지는 기존 것을 두고 그 안의 새 id 루틴만 추가. 설정은 유지
@@ -128,7 +129,9 @@
 세 섹션으로 나뉜 IIFE 하나. 더 쪼개지 말 것.
 
 1. **상태 · 충돌 로직**: 상수(`KEY`, `DAYS`, `PCOL`), 유틸(`toMin`, `fromMin`, `ymd`, `wd`, `overlap`…), `load`/`save`, `applyTheme`, 설정 기본값(`SETTINGS_DEFAULTS`, `cfg`, `dayOrder`, `weekStartOf`), 백업 검증·합치기(`validateBackup`, `mergeBackup`), 구글 연동(`G`, `googleConnect`/`googleDisconnect`, `ensureGoogleEvents`, `toLocalEvent`), `view` 상태, `activeItems`/`eventConflicts`/`pageConflicts`
-2. **렌더링**: `render()` 가 `#app` 을 통째로 다시 그린다. `h()` 로 DOM 생성. 사이드바, 월간, 주간, 페이지 편집기, 드래그 그리드, 라벨 편집기
+2. **렌더링**: `render()` 가 `#app` 을 통째로 다시 그린다. `h()` 로 DOM 생성. 사이드바(`캘린더` 항목 하나 + 루틴 페이지 목록 + 하단 고정 ⚙ 설정), 월간, 주간, 일간, 페이지 편집기, 드래그 그리드, 라벨 편집기
+   - 캘린더 뷰 전환은 상단바 세그먼트(`calSeg()`: 일간/주간/월간, `setCalView()`). 마지막 뷰는 `routine-cal-view` 키에 기억(`lastCalView()`), 백업과 무관
+   - 주간과 일간은 `timeGridBody(dates)` 를 공유한다(7열/1열). 일간(`renderDay`)은 `view.day`(YYYY-MM-DD) 기준으로 ‹ › 하루 이동·오늘·+ 약속만 있고 드래그 편집은 없다
    - 주간 뷰 겹침 배치(`layoutOverlaps`): 같은 요일에서 겹치는 루틴 블록은 이어져 겹치는 묶음별로 열을 배정해 폭을 n등분(구글 캘린더 방식). 3열 이상이면 라벨을 빼고 title 툴팁만. 겹치지 않는 블록은 기본 폭. 약속 블록은 대상 아님
    - 편집 그리드 블록 조작(`renderEditGrid`): 본체 드래그=이동(요일 간 이동 가능), 상단/하단 6px 핸들(`.rs`)=시작/끝 조절. 30분 스냅, 최소 30분, 06:00~24:00 안으로 클램프. 5px 미만 움직임은 클릭(이름 편집기). 드래그 중엔 시간 텍스트만 바꾸고 놓을 때 `save()`+`render()`. 블록을 누르면 열려 있던 이름 편집기는 `settleLabelEditor()` 로 렌더 없이 확정한다 (드래그 도중 재렌더 방지)
 3. **이벤트 모달 · 설정 · 토스트**: `openEvent`, `openSettings`(탭: 일반/약속/백업, `exportBackup` 포함), `toast`
