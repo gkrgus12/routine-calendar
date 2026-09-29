@@ -84,7 +84,9 @@ function validateBackup(obj){
       if(!ev||typeof ev!=='object'||!isId(ev.id))throw new Error(`events[${i}]: id 가 없어요`);
       uniq(eids,ev.id,'약속');
       if(!isDate(ev.startDate)||!isDate(ev.endDate)||!isTime(ev.startTime)||!isTime(ev.endTime))throw new Error(`events[${i}]: 날짜(YYYY-MM-DD)·시간(HH:MM) 형식을 확인하세요`);
-      return {id:ev.id,title:typeof ev.title==='string'?ev.title:'',startDate:ev.startDate,endDate:ev.endDate,startTime:ev.startTime,endTime:ev.endTime};
+      const out={id:ev.id,title:typeof ev.title==='string'?ev.title:'',startDate:ev.startDate,endDate:ev.endDate,startTime:ev.startTime,endTime:ev.endTime};
+      if(typeof ev.note==='string')out.note=ev.note; // 메모는 선택: 없는(예전) 파일은 그대로, 문자열이 아니면 버림
+      return out;
     });
     const st=obj.settings;
     if(!isTime(st.defaultStart)||!(Number.isFinite(st.defaultDur)&&st.defaultDur>=5))throw new Error('settings: defaultStart(HH:MM)·defaultDur(5 이상) 를 확인하세요');
@@ -245,7 +247,7 @@ async function fetchGoogleEvents(from,to){
 // 으로 나눠 표시하고, 편집은 raw 의 실제 시작·끝으로 한다. cancelled 는 버린다
 function toLocalEvents(it){
   if(!it||it.status==='cancelled')return [];
-  const base={gid:it.id,title:it.summary||'(제목 없음)',google:true,raw:it,recurring:!!it.recurringEventId,link:it.htmlLink||''};
+  const base={gid:it.id,title:it.summary||'(제목 없음)',note:it.description||'',google:true,raw:it,recurring:!!it.recurringEventId,link:it.htmlLink||''};
   if(it.start&&it.start.date){
     const e=parse((it.end&&it.end.date)||it.start.date);e.setDate(e.getDate()-1);
     const endDate=ymd(e)<it.start.date?it.start.date:ymd(e);
@@ -263,16 +265,16 @@ function toLocalEvents(it){
 // 편집 폼 초기값: 구글 이벤트의 실제 시작·끝. <input type=time> 은 24:00 을 못 보여주므로 종일은 00:00~23:59 로, 자정에 끝나면 다음날 00:00 으로 표기(저장 시 같은 시각)
 function draftFromGoogle(it){
   if(it.start&&it.start.date){const e=parse((it.end&&it.end.date)||it.start.date);e.setDate(e.getDate()-1);
-    return {title:it.summary||'',startDate:it.start.date,endDate:ymd(e)<it.start.date?it.start.date:ymd(e),startTime:'00:00',endTime:'23:59',allDay:true}}
+    return {title:it.summary||'',note:it.description||'',startDate:it.start.date,endDate:ymd(e)<it.start.date?it.start.date:ymd(e),startTime:'00:00',endTime:'23:59',allDay:true}}
   const s=new Date(it.start.dateTime),e=new Date((it.end&&it.end.dateTime)||it.start.dateTime);
-  return {title:it.summary||'',startDate:ymd(s),endDate:ymd(e),startTime:fromMin(s.getHours()*60+s.getMinutes()),endTime:fromMin(e.getHours()*60+e.getMinutes()),allDay:false};
+  return {title:it.summary||'',note:it.description||'',startDate:ymd(s),endDate:ymd(e),startTime:fromMin(s.getHours()*60+s.getMinutes()),endTime:fromMin(e.getHours()*60+e.getMinutes()),allDay:false};
 }
 // 폼 값 → Calendar API 본문. 종일(00:00~23:59 그대로 둔 종일 이벤트)은 date, 아니면 dateTime(시작일+시작시간 ~ 종료일+끝시간, 연속 구간)
 function toGoogleBody(d){
-  if(d.allDay&&d.startTime==='00:00'&&d.endTime==='23:59'){const e=parse(d.endDate);e.setDate(e.getDate()+1);return {summary:d.title,start:{date:d.startDate},end:{date:ymd(e)}}}
+  if(d.allDay&&d.startTime==='00:00'&&d.endTime==='23:59'){const e=parse(d.endDate);e.setDate(e.getDate()+1);return {summary:d.title,description:d.note||'',start:{date:d.startDate},end:{date:ymd(e)}}}
   const tz=Intl.DateTimeFormat().resolvedOptions().timeZone;
   const iso=(date,time)=>{const x=parse(date);x.setMinutes(toMin(time));return x.toISOString()}; // '24:00' 은 다음날 00:00
-  return {summary:d.title,start:{dateTime:iso(d.startDate,d.startTime),timeZone:tz},end:{dateTime:iso(d.endDate,d.endTime),timeZone:tz}};
+  return {summary:d.title,description:d.note||'',start:{dateTime:iso(d.startDate,d.startTime),timeZone:tz},end:{dateTime:iso(d.endDate,d.endTime),timeZone:tz}}; // description = 폼의 메모(여러 줄 그대로)
 }
 // 로컬(임시) 약속을 구글로 옮긴다. 로컬의 "여러 날 같은 시간" 의미를 지키려고 날짜마다 이벤트 하나씩 만든다. 성공한 것만 로컬에서 지운다
 async function migrateLocalEvents(){
@@ -282,7 +284,7 @@ async function migrateLocalEvents(){
   for(const ev of [...S.events]){
     try{
       let d=parse(ev.startDate),e=parse(ev.endDate);if(e<d)e=d;
-      for(;d<=e;d.setDate(d.getDate()+1)){const k=ymd(d);await gapiCall('POST',EV_BASE,toGoogleBody({title:ev.title,startDate:k,endDate:k,startTime:ev.startTime,endTime:ev.endTime}))}
+      for(;d<=e;d.setDate(d.getDate()+1)){const k=ymd(d);await gapiCall('POST',EV_BASE,toGoogleBody({title:ev.title,note:ev.note,startDate:k,endDate:k,startTime:ev.startTime,endTime:ev.endTime}))}
       S.events=S.events.filter(x=>x.id!==ev.id);save();moved++;
     }catch(e){failed=e&&e.message?e.message:String(e);break}
   }
@@ -425,6 +427,8 @@ function refreshPalette(){
   document.documentElement.style.setProperty('--routine-alpha',String(cfg('routineAlpha')/100)); // 일간·주간 루틴 블록 + 편집 그리드 other 블록 투명도
 }
 // 약속 블록·칩 인라인 스타일: 설정의 약속 색 하나로 채우고, 밝은 색이면 글자를 어둡게
+// 블록·칩 툴팁: 제목(+겹침 표시) 뒤에 메모의 첫 줄(비어 있지 않은 첫 줄). 조각은 원본(src)의 메모
+function eventTip(ev,extra){const raw=ev.note||(ev.src&&ev.src.note)||'';const first=raw.split(/\r?\n/).map(l=>l.trim()).find(l=>l);return ev.title+(extra||'')+(first?'\n'+first:'')}
 function eventStyle(mode){const ci=cfg('eventColor')%ECOL.length;const hsl=EBASE[ci];
   if(mode==='chip')return '--ec:'+ECOL[ci]; // 월간 칩: 색만 넘기고 옅은 배경·진한 글자는 CSS 가 섞음 (iOS 월간 칩)
   return 'background:'+ECOL[ci]+(hsl&&hsl[2]>.62?';color:#14181d':';color:#fff')}
@@ -546,7 +550,7 @@ function renderMonth(main){
       const cf=!ev.allDay&&eventConflicts(ev).some(c=>c.date===key);
       // 구글 이벤트는 점선 테두리(.g), 종일 이벤트는 날짜 상단 한 줄(.allday, 정렬로 맨 위)
       const tmp=!ev.google&&G.status!=='on'; // 미연결 상태의 로컬 약속 = 임시 배지 (구글/로컬 구분 표기는 그 외에 없음)
-      cell.appendChild(h('div',{class:'ev'+(ev.allDay?' allday':'')+(tmp?' tmp':''),style:eventStyle('chip'),'data-src':ev.google?'g':'l',title:ev.title,onclick:(e)=>{e.stopPropagation();openEvent(ev.src||ev,null,null,{el:e.currentTarget,x:e.clientX,y:e.clientY})}},[
+      cell.appendChild(h('div',{class:'ev'+(ev.allDay?' allday':'')+(tmp?' tmp':''),style:eventStyle('chip'),'data-src':ev.google?'g':'l',title:eventTip(ev),onclick:(e)=>{e.stopPropagation();openEvent(ev.src||ev,null,null,{el:e.currentTarget,x:e.clientX,y:e.clientY})}},[
         cf?h('span',{class:'cf',title:'활성 루틴과 겹침'}):null,
         tmp?h('span',{class:'tag'},['임시']):null,
         ev.allDay?null:h('span',{class:'t'},[ev.startTime]),h('span',{class:'ti'},[ev.title||'(제목 없음)'])
@@ -620,7 +624,7 @@ function timeGridBody(dates,key){
   const adWeek=dates.map(d=>(evIdx[ymd(d)]||[]).filter(ev=>ev.allDay));
   if(adWeek.some(a=>a.length)){
     grid.appendChild(h('div',{class:'wad lab'},['종일']));
-    adWeek.forEach(list=>grid.appendChild(h('div',{class:'wad'},list.map(ev=>h('div',{class:'ev allday',style:eventStyle(),'data-src':ev.google?'g':'l',title:ev.title,onclick:e=>openEvent(ev.src||ev,null,null,{el:e.currentTarget,x:e.clientX,y:e.clientY})},[h('span',{class:'ti'},[ev.title])])))));
+    adWeek.forEach(list=>grid.appendChild(h('div',{class:'wad'},list.map(ev=>h('div',{class:'ev allday',style:eventStyle(),'data-src':ev.google?'g':'l',title:eventTip(ev),onclick:e=>openEvent(ev.src||ev,null,null,{el:e.currentTarget,x:e.clientX,y:e.clientY})},[h('span',{class:'ti'},[ev.title])])))));
   }
   // 접힌 띠: [lo,hi) 시간대에 걸친 루틴·약속 개수를 세서 표시. 아무것도 없으면 아주 얇게
   const countHidden=(lo,hi)=>{const rt=new Set(),ev=new Set();
@@ -659,7 +663,7 @@ function timeGridBody(dates,key){
       const tmp=!ev.google&&G.status!=='on';
       const segCls=ev.seg==='head'?' seg-head':ev.seg==='tail'?' seg-tail':ev.seg==='mid'?' seg-mid':'';
       // 약속 블록은 pointerdown 을 막아 열(드래그 생성)로 안 가게 하고, 클릭하면 편집 (조각은 원본 src 로)
-      col.appendChild(h('div',{class:'blk evb'+(cf?' cf':'')+segCls+((e-s)>=60?' tall':''),'data-src':ev.google?'g':'l',style:`top:${cy((s-H0*60)/60)};height:calc(var(--px) * ${(e-s)/60} - 2px);${eventStyle()}`,title:ev.title+(cf?' · 활성 루틴과 겹침':''),onpointerdown:e=>e.stopPropagation(),onclick:e=>openEvent(ev.src||ev,null,null,{el:e.currentTarget,x:e.clientX,y:e.clientY})},[h('div',{class:'l'},[(tmp?'임시 · ':'')+(ev.title||'(제목 없음)')]),(e-s)>=60?h('div',{class:'tm'},[ev.startTime+'–'+ev.endTime]):null]));
+      col.appendChild(h('div',{class:'blk evb'+(cf?' cf':'')+segCls+((e-s)>=60?' tall':''),'data-src':ev.google?'g':'l',style:`top:${cy((s-H0*60)/60)};height:calc(var(--px) * ${(e-s)/60} - 2px);${eventStyle()}`,title:eventTip(ev,cf?' · 활성 루틴과 겹침':''),onpointerdown:e=>e.stopPropagation(),onclick:e=>openEvent(ev.src||ev,null,null,{el:e.currentTarget,x:e.clientX,y:e.clientY})},[h('div',{class:'l'},[(tmp?'임시 · ':'')+(ev.title||'(제목 없음)')]),(e-s)>=60?h('div',{class:'tm'},[ev.startTime+'–'+ev.endTime]):null]));
     });
     // 빈 시간(또는 배경인 루틴 블록 위) 드래그 → 약속 생성. 편집 그리드와 같은 30분 스냅·고스트. 5px 미만 움직임은 클릭 = 기본 길이
     let drag=null,ghost=null;
@@ -995,7 +999,7 @@ function openEvent(ev,dateKey,preset,anchor){ // preset: 드래그 생성 시 {s
   const gmode=G.status==='on'&&(isNew||!!(ev&&ev.google));
   const raw=ev&&ev.google?ev.raw:null;
   const pst=(preset&&preset.startTime)||cfg('defaultStart');
-  const draft=raw?draftFromGoogle(raw):ev?{...ev}:{id:uid(),title:'',startDate:dateKey||today,endDate:dateKey||today,startTime:pst,endTime:(preset&&preset.endTime)||fromMin(Math.min(toMin(pst)+cfg('defaultDur'),1439))};
+  const draft=raw?draftFromGoogle(raw):ev?{note:'',...ev}:{id:uid(),title:'',note:'',startDate:dateKey||today,endDate:dateKey||today,startTime:pst,endTime:(preset&&preset.endTime)||fromMin(Math.min(toMin(pst)+cfg('defaultDur'),1439))};
   let busy=false;
   const ov=h('div',{class:'ov',onclick:(e)=>{if(e.target===ov&&!busy)close()}});
   const cfBox=h('div');
@@ -1018,6 +1022,7 @@ function openEvent(ev,dateKey,preset,anchor){ // preset: 드래그 생성 시 {s
     h('label',null,['종료일',edI]),
     h('label',null,['시작 시간',inp('startTime','time')]),
     h('label',null,['끝 시간',inp('endTime','time')]),
+    h('label',{class:'full'},['메모',h('textarea',{rows:'3',placeholder:'여러 줄 메모 (구글 캘린더의 설명과 같이 저장돼요)',oninput:e=>{draft.note=e.target.value}},[draft.note||''])]),
   ]);
   const note=gmode?(raw?(raw.recurringEventId?'구글 캘린더 반복 일정 — 이 일정만 수정·삭제돼요.':draft.allDay?'구글 캘린더 종일 일정 — 시간을 00:00~23:59 그대로 두면 종일로 저장돼요.':'구글 캘린더 일정이에요. 저장하면 바로 반영돼요.'):'연결된 구글 캘린더(primary)에 추가돼요.')
     :(G.status==='on'?'임시(로컬) 약속이에요. 설정 > 구글 탭에서 구글 캘린더로 옮길 수 있어요.':null);

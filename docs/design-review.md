@@ -82,6 +82,7 @@
 | 월간 날짜 칸 클릭 → 클릭 지점 높이에 팝오버 상단 | [popover-cell-light](shots/popover-cell-light.png) |
 | 일간 폭 전체 블록 → 클릭 지점 기준 | [popover-day-light](shots/popover-day-light.png) |
 | 등장 프레임 0·40·80·120ms (위쪽 모서리에서 커짐) | [motion-popover-light](shots/motion-popover-light.png) |
+| 메모(여러 줄) 필드가 들어간 폼 — 높이가 늘어 아래가 부족하면 위로 밀림 | [popover-note-light](shots/popover-note-light.png) · [popover-note-dark](shots/popover-note-dark.png) |
 | 상단바: 이번 주 / 12월 28일 – 1월 3일 / 12월 31일 (목) / 월간 — 화살표 자리 동일 | [bar-nav](shots/bar-nav.png) |
 
 ## 4차: 상단바 재배치 (macOS 캘린더 기준)

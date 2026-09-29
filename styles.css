@@ -391,3 +391,7 @@ button[disabled]:active{transform:none}
 .bar.cal h2{font-size:26px;margin:0 0 0 4px;overflow:hidden;text-overflow:ellipsis}
 .bar.cal h2 .yr{font-size:19px}
 .bar .navpair button.today{padding:6px 12px}
+
+/* 약속 폼 메모(여러 줄) */
+.md .f textarea{width:100%;border:1px solid transparent;background:var(--field);border-radius:10px;padding:7px 10px;font:inherit;font-size:13px;line-height:1.4;resize:vertical;min-height:64px;color:var(--ink)}
+.md .f textarea:focus{outline:2px solid var(--accent);outline-offset:1px}
