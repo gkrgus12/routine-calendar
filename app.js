@@ -292,7 +292,7 @@ function renderWeek(main){
   grid.appendChild(h('div',{class:'whd'},['']));
   const dates=[];for(let i=0;i<7;i++){const d=new Date(ws);d.setDate(ws.getDate()+i);dates.push(d);grid.appendChild(h('div',{class:'whd'+(ymd(d)===today?' today':'')},[`${DAYS[wd(d)]} ${d.getDate()}`]))}
   const tc=h('div',{class:'tcol first',style:'height:'+height+'px'});
-  for(let hr=H0;hr<=H1;hr++){const top=(hr-H0)*PX;tc.appendChild(h('div',{class:'hrline',style:'top:'+top+'px'}));if(hr<H1)tc.appendChild(h('div',{class:'hrlab',style:'top:'+top+'px'},[pad(hr)+':00']))}
+  for(let hr=H0;hr<H1;hr++)tc.appendChild(h('div',{class:'hrlab',style:'top:'+((hr-H0)*PX)+'px'},[pad(hr)+':00'])); // 시간 축 열에는 가로선 없이 라벨만
   grid.appendChild(tc);
   const evIdx=indexEvents();
   dates.forEach((d,i)=>{
@@ -400,7 +400,7 @@ function renderEditGrid(p){
   grid.appendChild(h('div',{class:'whd'},['']));
   order.forEach(d=>grid.appendChild(h('div',{class:'whd'},[DAYS[d]])));
   const tc=h('div',{class:'tcol first',style:'height:'+height+'px'});
-  for(let hr=H0;hr<=H1;hr++){const top=(hr-H0)*PX;tc.appendChild(h('div',{class:'hrline',style:'top:'+top+'px'}));if(hr<H1)tc.appendChild(h('div',{class:'hrlab',style:'top:'+top+'px'},[pad(hr)+':00']))}
+  for(let hr=H0;hr<H1;hr++)tc.appendChild(h('div',{class:'hrlab',style:'top:'+((hr-H0)*PX)+'px'},[pad(hr)+':00'])); // 시간 축 열에는 가로선 없이 라벨만
   grid.appendChild(tc);
   const col=PCOL[p.color%PCOL.length];
   const others=activeItems(p.id);
