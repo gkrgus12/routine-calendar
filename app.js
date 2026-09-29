@@ -111,7 +111,10 @@ function mergeBackup(data){
 // 서버 없이 브라우저에서 Google Identity Services(토큰 클라이언트) + Calendar API v3 를 직접 호출한다.
 // 토큰은 G.token(메모리)에만 두고 절대 localStorage 에 쓰지 않는다 → 새로고침하면 다시 연결해야 한다.
 const GOOGLE_SCOPE='https://www.googleapis.com/auth/calendar.readonly';
-const G={status:'off',token:null,expiresAt:0,email:'',events:[],anchor:null,loading:null,syncedAt:null,error:''}; // status: off | connecting | on | expired
+const G={status:'off',token:null,expiresAt:0,email:'',events:[],anchor:null,loading:null,syncedAt:null,error:'',note:''}; // status: off | connecting | on | expired
+const GLINK_KEY='routine-cal-google-linked'; // "연결한 적 있음" 플래그만 저장 (토큰은 절대 저장하지 않음). 로드 시 조용한 재연결 시도의 근거
+const isLinked=()=>{try{return localStorage.getItem(GLINK_KEY)==='1'}catch(e){return false}};
+const setLinked=on=>{try{on?localStorage.setItem(GLINK_KEY,'1'):localStorage.removeItem(GLINK_KEY)}catch(e){}};
 const googleClientId=()=>window.GOOGLE_CLIENT_ID||''; // config.js 의 var GOOGLE_CLIENT_ID
 let onGoogleChange=null; // 설정 모달 구글 탭이 열려 있으면 패널 다시 그리기
 const notifyGoogle=()=>{render();if(onGoogleChange)onGoogleChange()};
@@ -121,35 +124,46 @@ function loadGis(){ // GIS 스크립트는 연결을 시도할 때만 로드 (�
   if(!gisPromise)gisPromise=new Promise((res,rej)=>{const el=document.createElement('script');el.src='https://accounts.google.com/gsi/client';el.async=true;el.defer=true;el.onload=()=>res();el.onerror=()=>{gisPromise=null;rej(new Error('Google 스크립트를 불러오지 못했어요'))};document.head.appendChild(el)});
   return gisPromise;
 }
-async function googleConnect(){
-  if(!googleClientId()){toast('config.js 에 GOOGLE_CLIENT_ID 가 없어요');return}
+async function googleConnect(opts){
+  const silent=!!(opts&&opts.silent); // 페이지 로드 시 자동 재연결: 실패해도 토스트 대신 탭에 "다시 연결" 안내만
+  if(!googleClientId()){if(!silent)toast('config.js 에 GOOGLE_CLIENT_ID 가 없어요');return}
   if(G.status==='connecting')return;
+  const prev=G.status;
   G.status='connecting';G.error='';if(onGoogleChange)onGoogleChange();
   try{
     await loadGis();
     const tok=await new Promise((res,rej)=>{
       const tc=google.accounts.oauth2.initTokenClient({client_id:googleClientId(),scope:GOOGLE_SCOPE,
         callback:r=>r&&r.access_token?res(r):rej(new Error(r&&r.error?String(r.error):'연결이 취소됐어요')),
-        error_callback:e=>rej(new Error(e&&e.type==='popup_closed'?'연결 창이 닫혔어요':(e&&e.message)||'연결에 실패했어요'))});
-      tc.requestAccessToken({prompt:''});
+        error_callback:e=>rej(new Error(e&&e.type==='popup_closed'?'연결 창이 닫혔어요':e&&e.type==='popup_failed_to_open'?'브라우저가 팝업을 막았어요':(e&&e.message)||'연결에 실패했어요'))});
+      tc.requestAccessToken({prompt:''}); // 이미 동의한 계정이면 계정 선택·동의 화면 없이 토큰만 받는다
     });
-    G.token=tok.access_token;G.expiresAt=Date.now()+(Number(tok.expires_in)||3600)*1000;G.status='on';
+    G.token=tok.access_token;G.expiresAt=Date.now()+(Number(tok.expires_in)||3600)*1000;G.status='on';G.note='';
     const cal=await gapiFetch('https://www.googleapis.com/calendar/v3/calendars/primary'); // primary 캘린더 id = 계정 이메일
-    G.email=cal.id||'';G.anchor=null;G.events=[];
-    toast(`Google 연결됨: ${G.email}`);
+    G.email=cal.id||'';G.anchor=null;G.events=[];setLinked(true);
+    toast(silent?`Google 다시 연결됨: ${G.email}`:`Google 연결됨: ${G.email}`);
   }catch(e){
-    if(G.status!=='expired'){G.status=G.token?'on':'off';}
-    G.error=e&&e.message?e.message:String(e);toast('Google 연결 실패: '+G.error);
+    const msg=e&&e.message?e.message:String(e);
+    if(silent&&!G.token){
+      G.status='expired';G.error='';
+      G.note=`이전에 연결한 기록이 있어 자동으로 다시 연결하려 했지만 실패했어요 (${msg}). 다시 연결을 누르세요. 브라우저가 팝업을 막은 거라면 이 사이트의 팝업을 허용하면 다음부터는 자동으로 이어져요.`;
+    }else{
+      G.status=G.token?'on':(prev==='expired'?'expired':'off');G.error=msg;toast('Google 연결 실패: '+msg);
+    }
   }
   notifyGoogle();
+}
+function googleAutoReconnect(){ // 페이지 로드 시: 연결 플래그가 있으면 prompt:'' 로 조용히 재연결 시도
+  if(!isLinked()||!googleClientId())return;
+  googleConnect({silent:true});
 }
 function googleDisconnect(){
   const t=G.token;
   if(t&&window.google&&google.accounts&&google.accounts.oauth2)try{google.accounts.oauth2.revoke(t,()=>{})}catch(e){}
-  G.token=null;G.status='off';G.email='';G.events=[];G.anchor=null;G.loading=null;G.syncedAt=null;G.error='';
+  G.token=null;G.status='off';G.email='';G.events=[];G.anchor=null;G.loading=null;G.syncedAt=null;G.error='';G.note='';setLinked(false);
   toast('Google 연결을 해제했어요. 로컬 데이터는 그대로예요.');notifyGoogle();
 }
-function googleExpire(){G.token=null;G.status='expired';G.events=[];G.anchor=null;G.loading=null;notifyGoogle()}
+function googleExpire(){G.token=null;G.status='expired';G.events=[];G.anchor=null;G.loading=null;G.note='토큰이 만료됐어요. 다시 연결하면 이어서 볼 수 있어요.';notifyGoogle()}
 async function gapiFetch(url){
   if(!G.token)throw new Error('연결되지 않았어요');
   if(Date.now()>G.expiresAt){googleExpire();throw new Error('토큰이 만료됐어요. 다시 연결하세요')}
@@ -788,11 +802,11 @@ function openSettings(tab){
     }else if(st==='connecting'){
       el.appendChild(h('p',{class:'hint'},['연결 중… 팝업에서 계정을 선택하세요.']));
     }else{
-      if(st==='expired')el.appendChild(h('div',{class:'cfbox'},['토큰이 만료됐어요. 다시 연결하면 이어서 볼 수 있어요.']));
+      if(st==='expired')el.appendChild(h('div',{class:'cfbox'},[G.note||'토큰이 만료됐어요. 다시 연결하면 이어서 볼 수 있어요.']));
       el.appendChild(h('div',{class:'frow'},[h('button',{class:'primary',onclick:googleConnect},[st==='expired'?'다시 연결':'Google 연결'])]));
       if(G.error)el.appendChild(h('p',{class:'hint danger'},[G.error]));
     }
-    el.appendChild(h('p',{class:'hint'},['primary 캘린더의 이벤트를 표시 중인 달 ±1개월 범위로 읽어 월간·주간 뷰에 점선 테두리로 보여줘요. 활성 루틴과 겹치면 경고 점이 붙어요. 토큰은 메모리에만 두고 저장하지 않아서 새로고침하면 다시 연결해야 해요.']));
+    el.appendChild(h('p',{class:'hint'},['primary 캘린더의 이벤트를 표시 중인 달 ±1개월 범위로 읽어 월간·주간 뷰에 점선 테두리로 보여줘요. 활성 루틴과 겹치면 경고 점이 붙어요. 토큰은 메모리에만 두고 저장하지 않아요. 연결한 적이 있으면 새로고침할 때 팝업 없이 조용히 다시 연결을 시도하는데, 브라우저가 팝업을 막으면 실패하니 이 사이트의 팝업을 허용해 두세요.']));
   }
   const md=h('div',{class:'md settings',role:'dialog','aria-label':'설정'},[
     h('div',{class:'shead'},[h('h3',null,['설정']),h('button',{class:'quiet',title:'닫기',onclick:()=>close()},['닫기'])]),
@@ -815,6 +829,7 @@ function toast(msg,lines){
 }
 
 render();
+googleAutoReconnect(); // 이전 연결 기록이 있으면 조용히 재연결
 // OS 테마가 바뀌면 다시 그려서 라벨 변형색 등이 새 팔레트를 따르게
 matchMedia('(prefers-color-scheme: dark)').addEventListener('change',()=>{if(!S.settings.theme||S.settings.theme==='system')render()});
 })();
