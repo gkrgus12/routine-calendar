@@ -108,7 +108,7 @@
 
 ## 룩 · 모션 (docs/ref 참고 이미지 기준)
 
-- 룩: iOS 이미지 = 컴포넌트(세그먼트·토글·알약 버튼·그룹 리스트 설정·굵은 제목), macOS 이미지 = 레이아웃(사이드바 216px, 헤더의 요일 작게 + 날짜 굵게, 오늘 빨간 원, 현재 시각 빨간 선 + 시각 pill, 작은 모서리·촘촘한 블록 여백, 긴 약속 블록엔 시간 줄). 상단바는 `[오늘/이번 주][‹ ›] 제목` 순서(`.navpair` 에 ‹ › 를 붙여 둠)라 제목 길이가 바뀌어도 화살표 자리가 고정된다. 규칙은 `styles.css` 맨 아래 "iOS / macOS 룩" 절에 모아 두었다(뒤에 와서 앞 규칙을 덮어씀)
+- 룩: iOS 이미지 = 컴포넌트(세그먼트·토글·알약 버튼·그룹 리스트 설정·굵은 제목), macOS 이미지 = 레이아웃(사이드바 216px, 헤더의 요일 작게 + 날짜 굵게, 오늘 빨간 원, 현재 시각 빨간 선 + 시각 pill, 작은 모서리·촘촘한 블록 여백, 긴 약속 블록엔 시간 줄). 캘린더 상단바(`calBar()`, `.bar.cal`)는 macOS 식 grid `1fr auto 1fr`: 왼쪽 큰 제목(월간 `2026년 10월`, 주간은 그 주가 속한 달 `2026년 9월`, 두 달에 걸치면 `2026년 9월–10월`(연도는 주 시작일), 일간 `10월 1일 수요일`), 가운데 일간/주간/월간 세그먼트, 오른쪽 `‹ 오늘 ›` 한 묶음(`.navpair`, 세 뷰 모두 버튼 이름은 오늘)과 그 왼쪽의 + 약속(월간·일간). 제목 길이가 바뀌어도 세그먼트는 정중앙, 화살표는 오른쪽 끝에 고정. 범례 칩은 그리드 위 왼쪽. 규칙은 `styles.css` 맨 아래 "iOS / macOS 룩" 절에 모아 두었다(뒤에 와서 앞 규칙을 덮어씀)
 - 월간 칩은 `eventStyle('chip')` 이 `--ec`(약속 색)만 넘기고 CSS 가 `color-mix` 로 옅은 배경(라이트 16%, 다크 30%) + 진한 글자를 만든다(iOS 칩). 시간축 뷰의 약속 블록은 채움 + 3px 왼쪽 띠(`inset box-shadow`). 월간 요일 헤더는 평일 진하게, `.we`(토·일) 흐리게
 - 모션은 의존성 없이 Web Animations API 로 구현(`anim()`). 스프링은 감쇠 진동(ζ=1−bounce, ω=2π: 정규화 시간 1 에서 안착)을 `linear()` 이징으로 32점 샘플링(`springEasing(bounce)`), 각 150~250ms. `prefers-reduced-motion` 이면 `anim()` 이 즉시 최종 상태를 적용한다. `anim()` 은 `finished` 와 `duration+40ms` 타이머 중 먼저 끝나는 쪽으로 resolve 한다(애니메이션 클록이 멈춘 환경에서도 제거 등 후속 작업 보장)
   - 뷰 전환(`transitionMain`): `render()` 에서 `viewKey`(일/주/월/페이지)가 바뀔 때만 나가는 `.main` 을 `.leaving` 으로 겹쳐 페이드아웃 + 새 화면 페이드인/8px 슬라이드. ‹ › 이동은 즉시
@@ -163,8 +163,8 @@
 
 1. **상태 · 충돌 로직**: 상수(`KEY`, `DAYS`, `PCOL`), 유틸(`toMin`, `fromMin`, `ymd`, `wd`, `overlap`…), `load`/`save`, `applyTheme`, 설정 기본값(`SETTINGS_DEFAULTS`, `cfg`, `dayOrder`, `weekStartOf`), 백업 검증·합치기(`validateBackup`, `mergeBackup`), 구글 연동(`G`, `googleConnect`/`googleDisconnect`, `ensureGoogleEvents`, `toLocalEvent`), `view` 상태, `activeItems`/`eventConflicts`/`pageConflicts`
 2. **렌더링**: `render()` 가 `#app` 을 통째로 다시 그린다. `h()` 로 DOM 생성. 사이드바(`캘린더` 항목 하나 + 루틴 페이지 목록 + 하단 고정 ⚙ 설정), 월간, 주간, 일간, 페이지 편집기, 드래그 그리드, 라벨 편집기
-   - 캘린더 뷰 전환은 상단바 세그먼트(`calSeg()`: 일간/주간/월간, `setCalView()`). 마지막 뷰는 `routine-cal-view` 키에 기억(`lastCalView()`), 백업과 무관
-   - 주간과 일간은 `timeGridBody(dates)` 를 공유한다(7열/1열). 일간(`renderDay`)은 `view.day`(YYYY-MM-DD) 기준으로 ‹ › 하루 이동·오늘·+ 약속. 활성 페이지가 없어도 빈 그리드는 항상 그리고 위에 얇은 `.notice` 한 줄만
+   - 캘린더 뷰 전환은 상단바 세그먼트(`calSeg()`: 일간/주간/월간, `setCalView()`). 세 캘린더 뷰의 상단바는 `calBar(title,{prev,next,today},addBtn)` 하나로 그린다. 마지막 뷰는 `routine-cal-view` 키에 기억(`lastCalView()`), 백업과 무관
+   - 주간과 일간은 `timeGridBody(dates)` 를 공유한다(7열/1열). 일간(`renderDay`)은 `view.day`(YYYY-MM-DD) 기준으로 ‹ › 하루 이동·오늘·+ 약속. 주간의 오늘 버튼은 이번 주로 간다. 활성 페이지가 없어도 빈 그리드는 항상 그리고 위에 얇은 `.notice` 한 줄만
    - 일간·주간의 빈 시간을 드래그하면 약속이 생긴다(편집 그리드와 같은 30분 스냅·고스트, 놓으면 `openEvent(null, 날짜, {startTime,endTime})`). 5px 미만 움직임은 클릭 = 그 슬롯부터 기본 길이. 루틴 블록은 배경(`.blk.rt`, 흐림)이라 그 위에서 시작해도 되고, 약속 블록은 pointerdown 을 막아 클릭하면 편집. 약속 블록의 드래그 이동·리사이즈는 없음
    - 약속 블록·칩은 구글/로컬 구분 없이 설정의 약속 색 하나를 쓴다(시간축 뷰는 채움 + 왼쪽 띠, 월간 칩은 옅은 배경; 툴팁에 [구글] 없음). 미연결 상태의 로컬 약속에만 작은 "임시" 배지. 활성 루틴과 겹치면 월간은 점, 시간축 뷰는 경고색 안쪽 테두리
    - 주간 뷰 겹침 배치(`layoutOverlaps`): 같은 요일에서 겹치는 루틴 블록은 이어져 겹치는 묶음별로 열을 배정해 폭을 n등분(구글 캘린더 방식). 3열 이상이면 라벨을 빼고 title 툴팁만. 겹치지 않는 블록은 기본 폭. 약속 블록은 대상 아님

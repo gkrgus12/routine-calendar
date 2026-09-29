@@ -460,6 +460,15 @@ function segControl(name,options,value,onPick){
   return el;
 }
 const calSeg=()=>segControl('보기',[['day','일간'],['week','주간'],['month','월간']],view.type,setCalView);
+// 캘린더 상단바(macOS 식): 왼쪽 큰 제목 · 가운데 일간/주간/월간 · 오른쪽 ‹ 오늘 › 한 묶음(+ 약속은 그 왼쪽). grid(1fr auto 1fr)라 제목 길이와 무관하게 세그먼트는 정중앙, ‹ › 는 오른쪽 끝에 고정
+function calBar(title,nav,addBtn){
+  return h('div',{class:'bar cal'},[
+    h('div',{class:'bl'},[h('h2',null,title)]),
+    calSeg(),
+    h('div',{class:'br'},[addBtn,h('div',{class:'navpair'},[h('button',{onclick:nav.prev},['‹']),h('button',{class:'today',onclick:nav.today},['오늘']),h('button',{onclick:nav.next},['›'])])])
+  ]);
+}
+
 const isCalView=()=>['day','week','month'].includes(view.type);
 
 function renderSide(){
@@ -518,15 +527,9 @@ function renderMain(){
 function renderMonth(main){
   const [y,m]=view.ym.split('-').map(Number);
   ensureGoogleEvents(view.ym);
-  const bar=h('div',{class:'bar'},[
-    h('button',{class:'quiet',onclick:()=>{view.ym=today.slice(0,7);render()}},['오늘']),
-    h('div',{class:'navpair'},[h('button',{onclick:()=>{shiftMonth(-1)}},['‹']),h('button',{onclick:()=>{shiftMonth(1)}},['›'])]),
-    h('h2',null,[h('span',{class:'yr'},[`${y}년`]),' ',h('b',null,[`${m}월`])]),
-    h('span',{class:'sp'}),
-    calSeg(),
-    h('span',{class:'sp'}),
-    h('button',{class:'primary',onclick:e=>openEvent(null,today,null,{el:e.currentTarget,x:e.clientX,y:e.clientY})},['+ 약속'])
-  ]);
+  const bar=calBar([h('span',{class:'yr'},[`${y}년`]),' ',h('b',null,[`${m}월`])],
+    {prev:()=>{shiftMonth(-1)},next:()=>{shiftMonth(1)},today:()=>{view.ym=today.slice(0,7);render()}},
+    h('button',{class:'primary',onclick:e=>openEvent(null,today,null,{el:e.currentTarget,x:e.clientX,y:e.clientY})},['+ 약속']));
   main.appendChild(bar);
   const body=h('div',{class:'body'});
   const grid=h('div',{class:'mgrid'});
@@ -573,14 +576,9 @@ function indexEvents(){ // 로컬 약속 + (연결돼 있으면) 구글 이벤�
 function renderWeek(main){
   view.weekStart=weekStartOf(view.weekStart||new Date());const ws=view.weekStart;const we=new Date(ws);we.setDate(ws.getDate()+6);
   ensureGoogleEvents(ymd(ws).slice(0,7));
-  const bar=h('div',{class:'bar'},[
-    h('button',{class:'quiet',onclick:()=>{view.weekStart=weekStartOf(new Date());render()}},['이번 주']),
-    h('div',{class:'navpair'},[h('button',{onclick:()=>{view.weekStart.setDate(view.weekStart.getDate()-7);render()}},['‹']),h('button',{onclick:()=>{view.weekStart.setDate(view.weekStart.getDate()+7);render()}},['›'])]),
-    h('h2',null,[`${ws.getMonth()+1}월 ${ws.getDate()}일 – ${we.getMonth()+1}월 ${we.getDate()}일`]),
-    h('span',{class:'sp'}),
-    calSeg(),
-    h('span',{class:'sp'}),
-  ]);
+  const m1=ws.getMonth()+1,m2=we.getMonth()+1; // 제목은 그 주가 속한 달. 두 달에 걸치면 "9월–10월" (연도는 주 시작일 기준)
+  const bar=calBar([h('span',{class:'yr'},[`${ws.getFullYear()}년`]),' ',h('b',null,[m1===m2?`${m1}월`:`${m1}월–${m2}월`])],
+    {prev:()=>{view.weekStart.setDate(view.weekStart.getDate()-7);render()},next:()=>{view.weekStart.setDate(view.weekStart.getDate()+7);render()},today:()=>{view.weekStart=weekStartOf(new Date());render()}},null);
   main.appendChild(bar);
   const dates=[];for(let i=0;i<7;i++){const d=new Date(ws);d.setDate(ws.getDate()+i);dates.push(d)}
   main.appendChild(timeGridBody(dates,'week:'+ymd(ws)));
@@ -590,15 +588,9 @@ function renderWeek(main){
 function renderDay(main){
   const d=parse(view.day);
   ensureGoogleEvents(view.day.slice(0,7));
-  const bar=h('div',{class:'bar'},[
-    h('button',{class:'quiet',onclick:()=>{view.day=today;render()}},['오늘']),
-    h('div',{class:'navpair'},[h('button',{onclick:()=>shiftDay(-1)},['‹']),h('button',{onclick:()=>shiftDay(1)},['›'])]),
-    h('h2',null,[`${d.getMonth()+1}월 ${d.getDate()}일 (${DAYS[wd(d)]})`]),
-    h('span',{class:'sp'}),
-    calSeg(),
-    h('span',{class:'sp'}),
-    h('button',{class:'primary',onclick:e=>openEvent(null,view.day,null,{el:e.currentTarget,x:e.clientX,y:e.clientY})},['+ 약속'])
-  ]);
+  const bar=calBar([h('b',null,[`${d.getMonth()+1}월 ${d.getDate()}일`]),' ',h('span',{class:'yr'},[`${DAYS[wd(d)]}요일`])],
+    {prev:()=>shiftDay(-1),next:()=>shiftDay(1),today:()=>{view.day=today;render()}},
+    h('button',{class:'primary',onclick:e=>openEvent(null,view.day,null,{el:e.currentTarget,x:e.clientX,y:e.clientY})},['+ 약속']));
   main.appendChild(bar);
   main.appendChild(timeGridBody([d],'day:'+view.day));
 }
