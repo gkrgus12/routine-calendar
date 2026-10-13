@@ -1,0 +1,163 @@
+<!-- variants: s=local s=google -->
+<!DOCTYPE html>
+<html lang="ko"><head><meta charset="utf-8"><title>약속 블록 드래그</title>
+<link rel="stylesheet" href="../styles.css"></head>
+<body><div class="app" id="app"></div>
+<script src="lib.js"></script>
+<script>
+// 주간·일간 약속 블록의 드래그 이동·리사이즈. PointerEvent 를 블록에 직접 보낸다(setPointerCapture 는 합성 이벤트에서 실패해도 무시됨).
+// local: 로컬 약속(저장), google: G.events 캐시 + fetch 스텁으로 PATCH 본문·캐시 갱신·실패 원위치 검사
+run(async()=>{
+  // 2026-10-12(월) 주. 루틴: 학교 수요일 13:00–14:00 (겹침 미리보기용)
+  seed({pages:[{id:'p1',name:'학교',color:0,active:true,colorByLabel:false,items:[{id:'i1',day:2,start:'13:00',end:'14:00',label:'수업'}]}],
+    events:V==='google'?[]:[
+      {id:'A',title:'A',startDate:'2026-10-12',endDate:'2026-10-12',startTime:'09:00',endTime:'10:00'},
+      {id:'M',title:'M 사흘',startDate:'2026-10-13',endDate:'2026-10-15',startTime:'16:00',endTime:'17:00'},
+      {id:'X',title:'X 자정',startDate:'2026-10-15',endDate:'2026-10-16',startTime:'23:00',endTime:'01:00'}],
+    settings:{defaultStart:'10:00',defaultDur:60,weekStart:'mon',dayStart:6,dayEnd:24}});
+  await loadApp();
+  const calls=[];let failNext=false;const RAW={};
+  const dt=(date,time)=>{const x=RC.parse(date);x.setMinutes(RC.toMin(time));return x.toISOString()}; // 현지 시간 → ISO (타임존 무관)
+  if(V==='google'){
+    RAW.g1={id:'g1',summary:'G 하나',start:{dateTime:dt('2026-10-12','09:00')},end:{dateTime:dt('2026-10-12','10:00')}};
+    RAW.g2={id:'g2',summary:'G 종일',start:{date:'2026-10-13'},end:{date:'2026-10-14'}};
+    RAW.g3={id:'g3',summary:'G 이틀',start:{dateTime:dt('2026-10-14','22:00')},end:{dateTime:dt('2026-10-15','02:00')}};
+    const G=RC.G;G.status='on';G.token='tok';G.expiresAt=Date.now()+3600e3;G.email='me@example.com';G.anchor='2026-10';
+    G.events=[].concat(...Object.values(RAW).map(r=>RC.toLocalEvents(r)));
+    window.fetch=(url,init)=>{
+      const m=(init&&init.method)||'GET';const body=init&&init.body?JSON.parse(init.body):null;const c={m,url,body};calls.push(c);log('fetch',m,url,body);
+      if(m==='PATCH'){
+        if(failNext){failNext=false;c.status=500;return Promise.resolve({ok:false,status:500,statusText:'Internal',json:()=>Promise.resolve({error:{message:'boom'}})})}
+        const id=decodeURIComponent(url.split('/').pop());const res=Object.assign({},RAW[id],body);RAW[id]=res;c.status=200;
+        return Promise.resolve({ok:true,status:200,json:()=>Promise.resolve(res)});
+      }
+      c.status=200;return Promise.resolve({ok:true,status:200,json:()=>Promise.resolve({items:Object.values(RAW)})});
+    };
+  }
+  RC.view.type='week';RC.view.weekStart=new Date(2026,9,12);RC.render();await sleep(30);
+
+  const grid=()=>document.querySelector('.wgrid');
+  const PX=()=>parseFloat(getComputedStyle(grid()).getPropertyValue('--px'));
+  const cols=()=>[...grid().querySelectorAll('.tcol:not(.first)')];
+  const colX=j=>{const r=cols()[j].getBoundingClientRect();return r.left+r.width/2};
+  const colOf=el=>{const x=el.getBoundingClientRect().left+el.getBoundingClientRect().width/2;return cols().findIndex(c=>{const r=c.getBoundingClientRect();return x>=r.left&&x<r.right})};
+  const blocksOf=t=>[...document.querySelectorAll('.wgrid .blk.evb')].filter(b=>b.title.startsWith(t)).sort((a,b)=>a.getBoundingClientRect().left-b.getBoundingClientRect().left);
+  const blockOf=t=>blocksOf(t)[0];
+  const center=el=>{const r=el.getBoundingClientRect();return {x:r.left+r.width/2,y:r.top+r.height/2}};
+  const pev=(type,el,x,y)=>el.dispatchEvent(new PointerEvent(type,{bubbles:true,cancelable:true,pointerId:1,pointerType:'mouse',button:0,buttons:1,clientX:x,clientY:y}));
+  async function drag(el,from,to,opts){ // from → to 를 3단계로 움직이고 놓는다. opts.hold: 놓기 전에 콜백(드래그 중 상태 검사)
+    pev('pointerdown',el,from.x,from.y);
+    for(let k=1;k<=3;k++)pev('pointermove',el,from.x+(to.x-from.x)*k/3,from.y+(to.y-from.y)*k/3);
+    if(opts&&opts.hold)opts.hold();
+    if(opts&&opts.cancel)el.dispatchEvent(new PointerEvent('pointercancel',{bubbles:true,pointerId:1}));else pev('pointerup',el,to.x,to.y);
+    await sleep(50);
+  }
+  const pop=()=>document.querySelector('.md.pop');
+  const closePop=async()=>{document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape'}));await sleep(30)};
+  const saved=()=>JSON.parse(localStorage.getItem('routine-cal-v1'));
+  const evOf=id=>(V==='google'?RC.G.events:RC.S.events).find(e=>e.id===id||e.gid===id);
+  const H=PX();log('px per hour',H);
+
+  if(V==='local'){
+    const A=()=>RC.S.events.find(e=>e.id==='A');
+    // 0. 핸들·클래스
+    let b=blockOf('A');
+    check('드래그 가능 블록: .mv + 상·하단 .rs 핸들',b.classList.contains('mv')&&!!b.querySelector('.rs.t')&&!!b.querySelector('.rs.b'));
+    // 1. 5px 미만 움직임 = 클릭 → 편집 팝오버, 데이터 그대로
+    let c=center(b);await drag(b,c,{x:c.x+2,y:c.y+2});
+    check('3px 움직임은 클릭: 팝오버 열림',!!pop()&&pop().querySelector('input[type=text]').value==='A');
+    check('클릭으로는 데이터 불변',A().startTime==='09:00'&&A().startDate==='2026-10-12');
+    await closePop();
+    // 2. 같은 날 아래로 1시간 (dy = 1시간 px → 2슬롯)
+    b=blockOf('A');c=center(b);await drag(b,c,{x:c.x,y:c.y+H});
+    check('같은 날 이동: 09:00–10:00 → 10:00–11:00',A().startTime==='10:00'&&A().endTime==='11:00'&&A().startDate==='2026-10-12',A());
+    check('저장됨(localStorage)',saved().events.find(e=>e.id==='A').startTime==='10:00');
+    check('이동 후 팝오버 안 열림',!pop());
+    b=blockOf('A');check('블록이 새 위치에 다시 그려짐(top = 4시간)',near(b.getBoundingClientRect().top-cols()[0].getBoundingClientRect().top,4*H,2),{top:b.getBoundingClientRect().top-cols()[0].getBoundingClientRect().top,expect:4*H});
+    // 3. 다른 날(수요일) 열로, 시간 그대로
+    c=center(b);await drag(b,c,{x:colX(2),y:c.y});
+    check('수요일로 이동: 날짜만 바뀜',A().startDate==='2026-10-14'&&A().endDate==='2026-10-14'&&A().startTime==='10:00',A());
+    check('블록이 수요일 열에',colOf(blockOf('A'))===2);
+    // 4. 드래그 중 겹침 미리보기: 수요일 13:00 루틴 위로 (3시간 아래)
+    b=blockOf('A');c=center(b);let midCf=null,midDrag=null;
+    await drag(b,c,{x:c.x,y:c.y+3*H},{hold:()=>{midCf=b.classList.contains('cf');midDrag=b.classList.contains('dragging')}});
+    check('드래그 중 .dragging + 겹침 .cf 미리 표시',midDrag===true&&midCf===true);
+    check('13:00–14:00 으로 이동, 루틴과 겹침 표시 유지',A().startTime==='13:00'&&blockOf('A').classList.contains('cf'));
+    // 5. 하단 리사이즈 +30분
+    b=blockOf('A');let hb=b.querySelector('.rs.b');c=center(hb);await drag(hb,c,{x:c.x,y:c.y+H/2});
+    check('하단 +30분: 13:00–14:30',A().startTime==='13:00'&&A().endTime==='14:30',A());
+    // 6. 상단 리사이즈 −30분
+    b=blockOf('A');let ht=b.querySelector('.rs.t');c=center(ht);await drag(ht,c,{x:c.x,y:c.y-H/2});
+    check('상단 −30분: 12:30–14:30',A().startTime==='12:30'&&A().endTime==='14:30',A());
+    // 7. 최소 30분: 하단을 한참 위로 끌어도 시작+30 까지만
+    b=blockOf('A');hb=b.querySelector('.rs.b');c=center(hb);await drag(hb,c,{x:c.x,y:c.y-10*H});
+    check('최소 30분 유지: 12:30–13:00',A().startTime==='12:30'&&A().endTime==='13:00',A());
+    b=blockOf('A');ht=b.querySelector('.rs.t');c=center(ht);await drag(ht,c,{x:c.x,y:c.y+10*H});
+    check('상단도 끝−30 까지만: 12:30–13:00 그대로',A().startTime==='12:30'&&A().endTime==='13:00',A());
+    // 8. 제자리 드롭(5px 넘게 움직였다 돌아옴): 변화 없음, 팝오버 없음
+    b=blockOf('A');c=center(b);pev('pointerdown',b,c.x,c.y);pev('pointermove',b,c.x,c.y+12);pev('pointermove',b,c.x,c.y);pev('pointerup',b,c.x,c.y);await sleep(50);
+    check('제자리 드롭: 데이터 그대로, 팝오버 없음',A().startTime==='12:30'&&!pop());
+    // 9. pointercancel → 원위치
+    b=blockOf('A');c=center(b);await drag(b,c,{x:c.x,y:c.y+2*H},{cancel:true});
+    check('pointercancel: 데이터 그대로',A().startTime==='12:30'&&A().startDate==='2026-10-14');
+    check('pointercancel 뒤 블록 원위치',colOf(blockOf('A'))===2&&near(blockOf('A').getBoundingClientRect().top-cols()[2].getBoundingClientRect().top,6.5*H,2));
+    // 10. 여러 날 로컬 약속: 수요일 조각을 목요일로 → 범위 전체가 하루 뒤로
+    const M=()=>RC.S.events.find(e=>e.id==='M');
+    check('M 사흘은 조각 3개',blocksOf('M 사흘').length===3);
+    b=blocksOf('M 사흘')[1];c=center(b);await drag(b,c,{x:colX(3),y:c.y});
+    check('M: 화~목 → 수~금, 시간 그대로',M().startDate==='2026-10-14'&&M().endDate==='2026-10-16'&&M().startTime==='16:00',M());
+    check('M 조각은 여전히 3개, 수·목·금 열',blocksOf('M 사흘').map(colOf).join(',')==='2,3,4',blocksOf('M 사흘').map(colOf));
+    // 11. 자정 넘김 조각: 핸들 없음, 드래그 무시, 클릭은 편집
+    const xs=blocksOf('X 자정'); // 꼬리(00:00~01:00)는 dayStart 6 앞이라 접힌 띠에 숨고 머리 조각만 보인다
+    check('자정 넘김: 보이는 건 머리 조각 하나, .mv·핸들 없음',xs.length===1&&xs[0].classList.contains('seg-head')&&!xs[0].classList.contains('mv')&&!xs[0].querySelector('.rs'),xs.map(x=>x.className));
+    const X=()=>RC.S.events.find(e=>e.id==='X');
+    c=center(xs[0]);await drag(xs[0],c,{x:c.x,y:c.y-3*H});
+    check('자정 넘김 조각 드래그는 무시',X().startTime==='23:00'&&X().startDate==='2026-10-15');
+    check('드래그 끝에 편집 팝오버가 열림(클릭 취급)',!!pop()&&pop().querySelector('input[type=text]').value==='X 자정');
+    await closePop();
+    // 12. 일간 뷰: 세로 이동만, 오른쪽으로 크게 끌어도 날짜 고정
+    RC.view.type='day';RC.view.day='2026-10-14';RC.render();await sleep(30);
+    b=blockOf('A');c=center(b);await drag(b,c,{x:c.x+400,y:c.y+H/2});
+    check('일간: +30분, 날짜 고정',A().startTime==='13:00'&&A().endTime==='13:30'&&A().startDate==='2026-10-14',A());
+    check('일간 블록도 .mv + 핸들',blockOf('A').classList.contains('mv')&&!!blockOf('A').querySelector('.rs.b'));
+    // 13. 범위 끝: 23:00–23:30 을 아래로 → 끝은 23:59 까지
+    b=blockOf('A');c=center(b);await drag(b,c,{x:c.x,y:c.y+20*H});
+    check('아래 끝: 23:00–23:30 으로 클램프',A().startTime==='23:00'&&A().endTime==='23:30',A());
+    b=blockOf('A');hb=b.querySelector('.rs.b');c=center(hb);await drag(hb,c,{x:c.x,y:c.y+5*H});
+    check('하단 리사이즈 끝은 23:59',A().endTime==='23:59',A());
+  }
+
+  if(V==='google'){
+    const g1=()=>RC.G.events.find(e=>e.gid==='g1');
+    let b=blockOf('G 하나');
+    check('구글 단일 이벤트 블록: .mv + 핸들',!!b&&b.classList.contains('mv')&&!!b.querySelector('.rs.b'));
+    // 1. 클릭 → 팝오버, PATCH 없음
+    let c=center(b);await drag(b,c,{x:c.x+1,y:c.y+1});
+    check('클릭: 팝오버, PATCH 없음',!!pop()&&calls.filter(x=>x.m==='PATCH').length===0);
+    await closePop();
+    // 2. 화요일 + 30분 → PATCH(start/end 만), 캐시 갱신, 재조회 없음
+    b=blockOf('G 하나');c=center(b);await drag(b,c,{x:colX(1),y:c.y+H/2});
+    const p=calls.filter(x=>x.m==='PATCH');
+    check('PATCH 한 번, events/g1',p.length===1&&/\/events\/g1$/.test(p[0].url),p.map(x=>x.url));
+    check('본문은 start/end 만',p.length===1&&Object.keys(p[0].body).sort().join(',')==='end,start',p[0]&&p[0].body);
+    check('start/end = 화요일 09:30–10:30 (현지 → ISO)',p.length===1&&p[0].body.start.dateTime===dt('2026-10-13','09:30')&&p[0].body.end.dateTime===dt('2026-10-13','10:30'),p[0]&&p[0].body);
+    check('캐시 갱신: g1 조각이 화요일 09:30',g1()&&g1().startDate==='2026-10-13'&&g1().startTime==='09:30'&&g1().endTime==='10:30',g1());
+    check('재조회(GET) 없음',calls.every(x=>x.m==='PATCH'),calls.map(x=>x.m));
+    check('블록이 화요일 열에',colOf(blockOf('G 하나'))===1);
+    // 3. 실패 → 토스트 + 원위치, 캐시 그대로
+    failNext=true;b=blockOf('G 하나');c=center(b);await drag(b,c,{x:colX(3),y:c.y+H});
+    check('실패 토스트',/구글 캘린더 오류: 500 boom/.test(toastText()),toastText());
+    check('실패 시 캐시 그대로',g1().startDate==='2026-10-13'&&g1().startTime==='09:30');
+    check('실패 시 블록 원위치(화요일, 09:30)',colOf(blockOf('G 하나'))===1&&near(blockOf('G 하나').getBoundingClientRect().top-cols()[1].getBoundingClientRect().top,3.5*H,2));
+    // 4. 종일은 .wad 줄, 드래그 블록 아님
+    check('종일 이벤트는 블록이 아니라 종일 줄',!blockOf('G 종일')&&!![...document.querySelectorAll('.wad .ev.allday')].find(e=>e.textContent.includes('G 종일')));
+    // 5. 이틀짜리 시간 이벤트 조각: 드래그 불가, PATCH 없음
+    const g3s=blocksOf('G 이틀');const n0=calls.length; // 꼬리(00:00~02:00)는 dayStart 6 앞이라 숨고 머리 조각만 보인다
+    check('이틀 이벤트: 보이는 머리 조각 하나, .mv 없음',g3s.length===1&&g3s[0].classList.contains('seg-head')&&!g3s[0].classList.contains('mv')&&!g3s[0].querySelector('.rs'),g3s.map(x=>x.className));
+    c=center(g3s[0]);await drag(g3s[0],c,{x:c.x,y:c.y-2*H});
+    check('조각 드래그는 PATCH 없이 팝오버만',calls.length===n0&&!!pop());
+    await closePop();
+  }
+});
+</script>
+</body></html>

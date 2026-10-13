@@ -368,10 +368,19 @@ button[disabled]:active{transform:none}
 .mgrid .hd{color:var(--ink);font-weight:700;font-size:12px}
 .mgrid .hd.we{color:var(--muted);font-weight:600}
 .mgrid .day .n{font-size:15px}
-.blk.evb{box-shadow:inset 3px 0 0 rgba(0,0,0,.22)}
-.blk.evb.cf{box-shadow:inset 3px 0 0 rgba(0,0,0,.22),inset 0 0 0 2px var(--warn)}
-@media (prefers-color-scheme: dark){:root:not([data-theme="light"]) .mgrid .ev{--tint:30%;color:color-mix(in srgb,var(--ec) 70%,#fff)}:root:not([data-theme="light"]) .mgrid .ev .tag{background:rgba(255,255,255,.14)}:root:not([data-theme="light"]) .blk.evb{box-shadow:inset 3px 0 0 rgba(255,255,255,.3)}:root:not([data-theme="light"]) .blk.evb.cf{box-shadow:inset 3px 0 0 rgba(255,255,255,.3),inset 0 0 0 2px var(--warn)}}
-:root[data-theme="dark"] .mgrid .ev{--tint:30%;color:color-mix(in srgb,var(--ec) 70%,#fff)}:root[data-theme="dark"] .mgrid .ev .tag{background:rgba(255,255,255,.14)}:root[data-theme="dark"] .blk.evb{box-shadow:inset 3px 0 0 rgba(255,255,255,.3)}:root[data-theme="dark"] .blk.evb.cf{box-shadow:inset 3px 0 0 rgba(255,255,255,.3),inset 0 0 0 2px var(--warn)}
+.blk.evb{--eband:inset 3px 0 0 rgba(0,0,0,.22);box-shadow:var(--eband)} /* 왼쪽 띠. 드래그·안착 그림자와 합성하려고 변수로 */
+.blk.evb.cf{box-shadow:var(--eband),inset 0 0 0 2px var(--warn)}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]) .mgrid .ev{--tint:30%;color:color-mix(in srgb,var(--ec) 70%,#fff)}:root:not([data-theme="light"]) .mgrid .ev .tag{background:rgba(255,255,255,.14)}:root:not([data-theme="light"]) .blk.evb{--eband:inset 3px 0 0 rgba(255,255,255,.3)}}
+:root[data-theme="dark"] .mgrid .ev{--tint:30%;color:color-mix(in srgb,var(--ec) 70%,#fff)}:root[data-theme="dark"] .mgrid .ev .tag{background:rgba(255,255,255,.14)}:root[data-theme="dark"] .blk.evb{--eband:inset 3px 0 0 rgba(255,255,255,.3)}
+/* 주간·일간 약속 블록 드래그(이동·리사이즈): 편집 그리드 루틴 블록과 같은 핸들·그림자. .mv = 드래그 가능(종일·조각 제외) */
+.wgrid .blk.evb.mv{cursor:grab}
+.wgrid .blk.evb .rs{position:absolute;left:0;right:0;height:6px;cursor:ns-resize}
+.wgrid .blk.evb .rs.t{top:0}
+.wgrid .blk.evb .rs.b{bottom:0}
+.wgrid .blk.evb.dragging{z-index:4;cursor:grabbing;filter:none;box-shadow:var(--eband),0 10px 24px rgba(0,0,0,.32)}
+.wgrid .blk.evb.dragging.cf{box-shadow:var(--eband),inset 0 0 0 2px var(--warn),0 10px 24px rgba(0,0,0,.32)}
+.wgrid .blk.evb.settling{z-index:4;box-shadow:var(--eband),0 8px 20px rgba(0,0,0,.28)}
+.wgrid .blk.evb.settling.cf{box-shadow:var(--eband),inset 0 0 0 2px var(--warn),0 8px 20px rgba(0,0,0,.28)}
 
 /* 3차: 약속 추가·편집은 데스크톱 폭에서 팝오버(기준점 옆, 위쪽 모서리를 기준점 상단에, 360px, 화살표·딤 없음). 상단바 ‹ 오늘 › 묶음은 .navpair (4차 참고) */
 .bar .navpair{display:inline-flex;align-items:stretch;flex:none;background:var(--panel);border-radius:999px;box-shadow:0 1px 2px rgba(0,0,0,.08),0 0 0 1px rgba(0,0,0,.05);overflow:hidden}

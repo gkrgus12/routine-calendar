@@ -399,7 +399,7 @@ function transitionMain(oldMain,main){
 }
 function settleBlock(){ // 드래그를 놓은 블록: 새로 그려진 자리에서 1.02 → 1 스프링으로 안착
   if(!pendingSettle)return;const id=pendingSettle;pendingSettle=null;
-  const b=document.querySelector(`.egrid .blk[data-id="${id}"]`);if(!b)return;
+  const b=document.querySelector(`.egrid .blk[data-id="${id}"], .wgrid .blk.evb[data-id="${id}"]`);if(!b)return;
   b.classList.add('settling');anim(b,{scale:[1.02,1]},{duration:250,bounce:.4}).then(()=>b.classList.remove('settling'));
 }
 function animateKnob(){ // 토글: 새로 그려진 knob 를 이전 위치에서 미끄러지듯
@@ -665,8 +665,10 @@ function timeGridBody(dates,key){
   const tc=h('div',{class:'tcol first',style:'height:'+height});
   for(let hr=H0;hr<H1;hr++)tc.appendChild(h('div',{class:'hrlab',style:'top:'+cy(hr-H0)},[pad(hr)+':00'])); // 시간 축 열에는 가로선 없이 라벨만
   grid.appendChild(tc);
+  const cols=[]; // 날짜 열 엘리먼트 (약속 블록을 다른 날로 끌 때 참조)
+  const dayAt=x=>{for(let j=0;j<n;j++){if(x<cols[j].getBoundingClientRect().right)return j}return n-1};
   dates.forEach((d,i)=>{
-    const col=h('div',{class:'tcol',style:'height:'+height});
+    const col=h('div',{class:'tcol',style:'height:'+height});cols[i]=col;
     for(let hr=H0;hr<=H1;hr++)col.appendChild(h('div',{class:'hrline',style:'top:'+cy(hr-H0)}));
     const blocks=[];
     const dow=wd(d);
@@ -688,8 +690,53 @@ function timeGridBody(dates,key){
       const cf=eventConflicts(ev).some(c=>c.date===ymd(d));
       const tmp=!ev.google&&G.status!=='on';
       const segCls=ev.seg==='head'?' seg-head':ev.seg==='tail'?' seg-tail':ev.seg==='mid'?' seg-mid':'';
-      // 약속 블록은 pointerdown 을 막아 열(드래그 생성)로 안 가게 하고, 클릭하면 편집 (조각은 원본 src 로)
-      col.appendChild(h('div',{class:'blk evb'+(cf?' cf':'')+segCls+((e-s)>=60?' tall':''),'data-src':ev.google?'g':'l',style:`top:${cy((s-H0*60)/60)};height:calc(var(--px) * ${(e-s)/60} - 2px);${eventStyle()}`,title:eventTip(ev,cf?' · 활성 루틴과 겹침':''),onpointerdown:e=>e.stopPropagation(),onclick:e=>openEvent(ev.src||ev,null,null,{el:e.currentTarget,x:e.clientX,y:e.clientY})},[h('div',{class:'l'},[(tmp?'임시 · ':'')+(ev.title||'(제목 없음)')]),(e-s)>=60?h('div',{class:'tm'},[ev.startTime+'–'+ev.endTime]):null]));
+      // 약속 블록 조작 (편집 그리드 루틴 블록과 같은 규칙): 본체 드래그=이동(주간은 다른 날 열로도), 상·하단 6px(.rs)=시작/끝 조절, 30분 스냅, 최소 30분.
+      // 5px 미만 움직임은 클릭 → 편집 팝오버 (pointerup 에서 연다, onclick 없음). pointerdown 은 열(드래그 생성)로 전파하지 않는다.
+      // 종일(위 줄)과 조각(seg: 자정 넘김·여러 날 구글 이벤트)은 클릭만. 드래그 중엔 eventConflicts 로 겹침을 계산해 .cf 테두리를 미리 보여준다
+      const movable=!ev.seg;
+      const lbl=h('div',{class:'l'},[(tmp?'임시 · ':'')+(ev.title||'(제목 없음)')]);
+      const blk=h('div',{class:'blk evb'+(cf?' cf':'')+segCls+((e-s)>=60?' tall':'')+(movable?' mv':''),'data-src':ev.google?'g':'l','data-id':ev.id,style:`top:${cy((s-H0*60)/60)};height:calc(var(--px) * ${(e-s)/60} - 2px);${eventStyle()}`,title:eventTip(ev,cf?' · 활성 루틴과 겹침':'')},
+        [lbl,(e-s)>=60?h('div',{class:'tm'},[ev.startTime+'–'+ev.endTime]):null,movable?h('div',{class:'rs t'}):null,movable?h('div',{class:'rs b'}):null]);
+      let dg=null;
+      const open=pe=>openEvent(ev.src||ev,null,null,{el:blk,x:pe.clientX,y:pe.clientY});
+      const paintBlk=()=>{
+        const ps=Math.max(dg.s,H0*60),pe=Math.min(dg.e,H1*60);const PX=PXv();
+        blk.style.top=((ps-H0*60)/60*PX)+'px';blk.style.height=Math.max(0,(pe-ps)/60*PX-2)+'px';
+        blk.style.transform=(dg.day===dg.day0?'':`translateX(${cols[dg.day].offsetLeft-cols[dg.day0].offsetLeft}px) `)+(dg.moved?'scale(1.02)':''); // 잡는 순간 1.02배 (+ .dragging 그림자)
+        lbl.textContent=fromMin(dg.s)+'–'+fromMin(dg.e);
+        const dk=ymd(dates[dg.day]);
+        blk.classList.toggle('cf',eventConflicts({startDate:dk,endDate:dk,startTime:fromMin(dg.s),endTime:fromMin(dg.e)}).length>0);
+      };
+      blk.addEventListener('pointerdown',pe=>{
+        pe.stopPropagation();
+        if(pe.button!==0&&pe.pointerType==='mouse')return;
+        if(!movable){dg={click:true};return}
+        const t=pe.target.classList;const mode=t.contains('rs')?(t.contains('t')?'top':'bottom'):'move';
+        const s0=toMin(ev.startTime),e0=toMin(ev.endTime);
+        dg={mode,x0:pe.clientX,y0:pe.clientY,s0,e0,day0:i,s:s0,e:e0,day:i,moved:false};
+        try{blk.setPointerCapture(pe.pointerId)}catch(x){}
+      });
+      blk.addEventListener('pointermove',pe=>{
+        if(!dg||dg.click)return;
+        const dx=pe.clientX-dg.x0,dy=pe.clientY-dg.y0;
+        if(!dg.moved){if(Math.hypot(dx,dy)<5)return;dg.moved=true;blk.classList.add('dragging')}
+        const dm=Math.round(dy/(PXv()*SLOT/60))*SLOT;const END=Math.min(H1*60,1439); // time 입력은 24:00 을 못 보여주므로 23:59 까지
+        if(dg.mode==='move'){ // 이동은 길이를 유지한다: 끝이 END 를 넘지 않는 마지막 30분 칸까지만
+          const dur=dg.e0-dg.s0;const maxS=Math.max(H0*60,Math.floor((END-dur)/SLOT)*SLOT);
+          dg.s=Math.min(Math.max(dg.s0+dm,H0*60),maxS);dg.e=Math.min(dg.s+dur,END);dg.day=n>1?dayAt(pe.clientX):i}
+        else if(dg.mode==='top')dg.s=Math.min(Math.max(dg.s0+dm,H0*60),Math.max(H0*60,Math.min(dg.e0-SLOT,H1*60-SLOT)));
+        else dg.e=Math.min(Math.max(dg.e0+dm,dg.s0+SLOT),END);
+        paintBlk();
+      });
+      blk.addEventListener('pointerup',pe=>{
+        if(!dg)return;const cur=dg;dg=null;
+        if(cur.click||!cur.moved){open(pe);return}
+        blk.classList.remove('dragging');
+        if(cur.s===cur.s0&&cur.e===cur.e0&&cur.day===cur.day0){render();return} // 제자리에 놓음 → 다시 그려 원위치
+        commitEventDrag(ev,{dayDelta:cur.day-cur.day0,startTime:fromMin(cur.s),endTime:fromMin(cur.e)});
+      });
+      blk.addEventListener('pointercancel',()=>{if(!dg)return;dg=null;render()});
+      col.appendChild(blk);
     });
     // 빈 시간(또는 배경인 루틴 블록 위) 드래그 → 약속 생성. 편집 그리드와 같은 30분 스냅·고스트. 5px 미만 움직임은 클릭 = 기본 길이
     let drag=null,ghost=null;
@@ -722,6 +769,25 @@ function timeGridBody(dates,key){
   return body;
 }
 
+// 주간·일간 약속 블록을 드래그로 옮기거나 늘린 결과를 저장한다. 로컬 약속은 날짜 범위를 dayDelta 만큼 옮기고 시간을 바꿔 save().
+// 구글 이벤트는 start/end 만 PATCH 하고 응답(갱신된 이벤트)으로 G.events 의 그 gid 조각을 갈아끼운다(재조회 없음; 응답이 이상하면 재조회).
+// 실패하면 상태를 바꾸지 않고 render() 로 원위치 + 토스트. 반복 일정은 인스턴스 id 라 이 일정만 옮겨진다
+async function commitEventDrag(ev,ch){
+  const shift=(dateStr,k)=>{const x=parse(dateStr);x.setDate(x.getDate()+k);return ymd(x)};
+  if(ev.google){
+    const raw=ev.raw;const d0=draftFromGoogle(raw);
+    const body=toGoogleBody({title:d0.title,note:d0.note,startDate:shift(d0.startDate,ch.dayDelta),endDate:shift(d0.endDate,ch.dayDelta),startTime:ch.startTime,endTime:ch.endTime,allDay:false});
+    try{
+      const res=await gapiCall('PATCH',gEventUrl(raw.id),{start:body.start,end:body.end});
+      if(res&&res.id)G.events=G.events.filter(x=>x.gid!==ev.gid).concat(toLocalEvents(res));else G.anchor=null;
+      pendingSettle=ev.id;render();
+    }catch(e){render();toast('구글 캘린더 오류: '+(e&&e.message?e.message:String(e)))}
+    return;
+  }
+  const src=ev.src||ev;
+  src.startDate=shift(src.startDate,ch.dayDelta);src.endDate=shift(src.endDate,ch.dayDelta);src.startTime=ch.startTime;src.endTime=ch.endTime;
+  pendingSettle=src.id;save();render();
+}
 // 같은 요일에서 겹치는 블록을 나란히 놓기 위한 열 배치 (구글 캘린더 방식).
 // 시작 시간순(같으면 긴 것 먼저)으로 훑으며 서로 이어져 겹치는 묶음(클러스터)을 만들고,
 // 묶음 안에서는 비어 있는 첫 열에 넣는다. 결과 n = 묶음의 열 수 → 폭을 n등분.
