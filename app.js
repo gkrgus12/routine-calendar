@@ -123,19 +123,29 @@ function mergeBackup(data){
 /* ---------- google calendar (약속 저장소) ---------- */
 // 서버 없이 브라우저에서 Google Identity Services(토큰 클라이언트) + Calendar API v3 를 직접 호출한다.
 // 토큰은 G.token(메모리)에만 두고 절대 localStorage 에 쓰지 않는다 → 새로고침하면 다시 연결해야 한다.
-// 스코프는 calendar.events 하나. 이 스코프로 허용되는 호출은 events.list/insert/patch/delete 뿐이다(calendars.get·calendarList 는 403
-// "insufficient authentication scopes") → 이 파일의 구글 호출은 전부 EV_BASE(primary 의 events) 아래로만 간다
+// 스코프: calendar.events(필수. events.list/insert/patch/delete — 어느 캘린더든 ACL 이 허용하면 됨) + calendar.calendarlist.readonly(선택. 읽을 캘린더 목록
+// users/me/calendarList 용. events 스코프로는 403 "insufficient authentication scopes"). 목록 권한이 없으면 primary 만 읽고 구글 탭에 "다시 연결 (권한 허용)".
+// calendars.get 등 그 밖의 API 는 부르지 않는다
 const GOOGLE_SCOPE='https://www.googleapis.com/auth/calendar.events';
-const GOOGLE_SCOPE_FULL='https://www.googleapis.com/auth/calendar'; // 전체 권한은 events 를 포함하므로 토큰에 이게 있어도 충분
-const EV_BASE='https://www.googleapis.com/calendar/v3/calendars/primary/events';
-const gEventUrl=id=>EV_BASE+'/'+encodeURIComponent(id);
+const GOOGLE_SCOPE_LIST='https://www.googleapis.com/auth/calendar.calendarlist.readonly';
+const GOOGLE_SCOPE_FULL='https://www.googleapis.com/auth/calendar'; // 전체 권한은 둘 다 포함
+const GOOGLE_SCOPE_READ='https://www.googleapis.com/auth/calendar.readonly'; // 읽기 전체 권한은 목록을 포함
+const GOOGLE_SCOPES=GOOGLE_SCOPE+' '+GOOGLE_SCOPE_LIST; // 요청 스코프
+const CAL_API='https://www.googleapis.com/calendar/v3/';
+const calEventsUrl=calId=>CAL_API+'calendars/'+encodeURIComponent(calId||'primary')+'/events';
+const EV_BASE=calEventsUrl('primary'); // 약속 추가·로컬 옮기기는 항상 primary
+const gEventUrl=(id,calId)=>calEventsUrl(calId)+'/'+encodeURIComponent(id); // 수정·삭제는 이벤트가 속한 캘린더로
 // status: off | connecting | on | expired. needConsent: 토큰에 calendar.events 가 없었거나 API 가 scope 부족 403 을 줘서 미연결로 둔 상태 → 다음 수동 연결은 prompt:'consent' 로 동의 화면을 다시 띄운다
-const G={status:'off',token:null,expiresAt:0,email:'',events:[],anchor:null,loading:null,syncedAt:null,error:'',note:'',needConsent:false};
+// canList: 토큰에 목록 스코프가 있는지. calendars: calendarList 항목 [{id,name,color,role,primary}] (없으면 null → primary 만 읽음). calCache: 캘린더 id → {ym, events} 캘린더별 캐시
+const G={status:'off',token:null,expiresAt:0,email:'',events:[],anchor:null,loading:null,syncedAt:null,error:'',note:'',needConsent:false,canList:false,calendars:null,calNote:'',calCache:{}};
 const GLINK_KEY='routine-cal-google-linked'; // "연결한 적 있음" 플래그만 저장 (토큰은 절대 저장하지 않음). 로드 시 조용한 재연결 시도의 근거
 const GHINT_KEY='routine-cal-google-hint';   // 마지막으로 연결한 계정 이메일(토큰 아님). 재연결 때 GIS hint 로 넘겨 계정 선택 화면을 건너뛴다
 const isLinked=()=>{try{return localStorage.getItem(GLINK_KEY)==='1'}catch(e){return false}};
 const getHint=()=>{try{return localStorage.getItem(GHINT_KEY)||''}catch(e){return ''}};
-const setLinked=(on,email)=>{try{if(on){localStorage.setItem(GLINK_KEY,'1');if(email)localStorage.setItem(GHINT_KEY,email)}else{localStorage.removeItem(GLINK_KEY);localStorage.removeItem(GHINT_KEY)}}catch(e){}};
+const GCALS_KEY='routine-cal-google-cals';  // 읽을 캘린더 id 목록(JSON 배열). 계정에 묶인 값이라 백업 데이터 키와 분리. primary 는 항상 읽으므로 넣지 않아도 된다. 해제 시 삭제
+const setLinked=(on,email)=>{try{if(on){localStorage.setItem(GLINK_KEY,'1');if(email)localStorage.setItem(GHINT_KEY,email)}else{localStorage.removeItem(GLINK_KEY);localStorage.removeItem(GHINT_KEY);localStorage.removeItem(GCALS_KEY)}}catch(e){}};
+const getCalSel=()=>{try{const v=JSON.parse(localStorage.getItem(GCALS_KEY)||'null');return Array.isArray(v)?v.filter(x=>typeof x==='string'):null}catch(e){return null}};
+const setCalSel=ids=>{try{localStorage.setItem(GCALS_KEY,JSON.stringify(ids))}catch(e){}};
 const glog=(...a)=>{try{console.info('[gcal]',...a)}catch(e){}}; // 연결 흐름 추적용 콘솔 로그 (호출 여부·순서·응답 error 값)
 const googleClientId=()=>window.GOOGLE_CLIENT_ID||''; // config.js 의 var GOOGLE_CLIENT_ID
 let onGoogleChange=null; // 설정 모달 구글 탭이 열려 있으면 패널 다시 그리기
@@ -149,8 +159,8 @@ function loadGis(){ // GIS 스크립트는 연결을 시도할 때만 로드 (�
 async function googleConnect(opts){
   // silent: 페이지 로드 시 자동 재연결. prompt:'none' 으로 어떤 UI(계정 선택·동의 팝업)도 띄우지 않고, 실패하면 미연결(expired) + "다시 연결" 버튼만 보여준다.
   // 수동 연결은 prompt:'' (이미 동의한 계정이면 UI 없이, 아니면 동의 화면). 둘 다 마지막 계정 이메일을 hint 로 넘겨 계정 선택 화면을 건너뛴다
-  // 스코프 부족으로 미연결이 된 뒤(needConsent)의 수동 연결은 prompt:'consent' 로 동의 화면을 반드시 다시 띄워 권한을 받는다
-  const silent=!!(opts&&opts.silent);
+  // 스코프 부족으로 미연결이 된 뒤(needConsent)의 수동 연결과 opts.consent(구글 탭 "다시 연결 (권한 허용)": 목록 스코프 추가 동의)는 prompt:'consent' 로 동의 화면을 반드시 다시 띄운다
+  const silent=!!(opts&&opts.silent);const consent=!!(opts&&opts.consent)||G.needConsent;
   if(!googleClientId()){if(!silent)toast('config.js 에 GOOGLE_CLIENT_ID 가 없어요');return}
   if(G.status==='connecting'){glog('connect ignored: already connecting');return}
   const prev=G.status;
@@ -159,10 +169,10 @@ async function googleConnect(opts){
   G.status='connecting';G.error='';if(onGoogleChange)onGoogleChange();
   try{
     await loadGis();
-    const req=Object.assign({prompt:silent?'none':G.needConsent?'consent':''},hint?{hint}:{});
+    const req=Object.assign({prompt:silent?'none':consent?'consent':''},hint?{hint}:{});
     glog('GIS ready → requestAccessToken',req);
     const tok=await new Promise((res,rej)=>{
-      const tc=google.accounts.oauth2.initTokenClient({client_id:googleClientId(),scope:GOOGLE_SCOPE,
+      const tc=google.accounts.oauth2.initTokenClient({client_id:googleClientId(),scope:GOOGLE_SCOPES,
         callback:r=>{
           glog('token callback',r&&r.error?{error:r.error,error_description:r.error_description||null,error_subtype:r.error_subtype||null}:{ok:true,scope:r&&r.scope,expires_in:r&&r.expires_in});
           r&&r.access_token?res(r):rej(new Error(r&&r.error?String(r.error):'연결이 취소됐어요'));
@@ -179,8 +189,10 @@ async function googleConnect(opts){
       throw Object.assign(new Error('"Google 캘린더 일정 보기·수정" 권한이 허용되지 않았어요'),{scopeInsufficient:true});
     }
     G.token=tok.access_token;G.expiresAt=Date.now()+(Number(tok.expires_in)||3600)*1000;G.status='on';G.note='';G.needConsent=false;
+    G.canList=hasListScope(tok.scope);G.calCache={};
     G.email=await fetchGoogleEmail();G.anchor=null;G.events=[];setLinked(true,G.email);
-    glog(silent?'auto-reconnect: ok':'connect: ok',{email:G.email});
+    await loadCalendarList(); // 실패해도 연결은 유지(primary 만 읽음)
+    glog(silent?'auto-reconnect: ok':'connect: ok',{email:G.email,canList:G.canList,calendars:G.calendars?G.calendars.length:null});
     toast(silent?`Google 다시 연결됨: ${G.email}`:`Google 연결됨: ${G.email}`);
   }catch(e){
     const msg=e&&e.message?e.message:String(e);
@@ -207,12 +219,16 @@ function googleAutoReconnect(){ // 페이지 로드 시: '로그인 유지' 가 
 function googleDisconnect(){
   const t=G.token;
   if(t&&window.google&&google.accounts&&google.accounts.oauth2)try{google.accounts.oauth2.revoke(t,()=>{})}catch(e){}
-  G.token=null;G.status='off';G.email='';G.events=[];G.anchor=null;G.loading=null;G.syncedAt=null;G.error='';G.note='';G.needConsent=false;setLinked(false);
+  G.token=null;G.status='off';G.email='';G.events=[];G.anchor=null;G.loading=null;G.syncedAt=null;G.error='';G.note='';G.needConsent=false;
+  G.canList=false;G.calendars=null;G.calNote='';G.calCache={};setLinked(false);
   toast('Google 연결을 해제했어요. 로컬 데이터는 그대로예요.');notifyGoogle();
 }
-function googleExpire(){G.token=null;G.status='expired';G.events=[];G.anchor=null;G.loading=null;G.note='토큰이 만료됐어요. 다시 연결하면 이어서 볼 수 있어요.';notifyGoogle()}
+function googleExpire(){G.token=null;G.status='expired';G.events=[];G.anchor=null;G.loading=null;G.calCache={};G.note='토큰이 만료됐어요. 다시 연결하면 이어서 볼 수 있어요.';notifyGoogle()}
 // 토큰 응답의 scope(공백 구분 목록)에 calendar.events(또는 이를 포함하는 calendar 전체 권한)가 있는지. scope 가 아예 없는 응답은 판단 불가 → 통과시키고 API 403 으로 잡는다
-const hasEventsScope=scope=>{const l=String(scope||'').split(/\s+/).filter(Boolean);return !l.length||l.includes(GOOGLE_SCOPE)||l.includes(GOOGLE_SCOPE_FULL)};
+const scopeList=scope=>String(scope||'').split(/\s+/).filter(Boolean);
+const hasEventsScope=scope=>{const l=scopeList(scope);return !l.length||l.includes(GOOGLE_SCOPE)||l.includes(GOOGLE_SCOPE_FULL)};
+// 목록 스코프(calendarlist.readonly, 또는 이를 포함하는 calendar / calendar.readonly). scope 없는 응답은 일단 시도하고 403 이면 없음으로 본다
+const hasListScope=scope=>{const l=scopeList(scope);return !l.length||l.includes(GOOGLE_SCOPE_LIST)||l.includes(GOOGLE_SCOPE_FULL)||l.includes(GOOGLE_SCOPE_READ)};
 // 403 응답이 "토큰 scope 부족" 인지 (Calendar API: message "Request had insufficient authentication scopes.", errors[].reason insufficientPermissions,
 // details[].reason ACCESS_TOKEN_SCOPE_INSUFFICIENT). 캘린더 ACL·할당량 같은 다른 403 과 구분한다
 function isScopeError(j,msg){
@@ -221,7 +237,7 @@ function isScopeError(j,msg){
 }
 // 권한 부족: 토큰을 버리고 미연결(expired)로 둔다. 연결 플래그는 유지해 탭에 "다시 연결 (권한 허용)" 을 보여주고, 그 연결은 prompt:'consent' 로 동의 화면을 다시 띄운다
 function googleNeedConsent(){
-  G.token=null;G.status='expired';G.events=[];G.anchor=null;G.loading=null;G.syncedAt=null;G.needConsent=true;G.error='';
+  G.token=null;G.status='expired';G.events=[];G.anchor=null;G.loading=null;G.syncedAt=null;G.needConsent=true;G.error='';G.calendars=null;G.calCache={};
   G.note='Google 캘린더 일정 권한이 허용되지 않아 연결하지 않았어요. "다시 연결 (권한 허용)" 을 누르고 동의 화면에서 "Google 캘린더의 일정 보기·수정" 을 체크하세요.';
 }
 // 계정 이메일: primary 캘린더의 제목(summary)은 계정 이메일이다. calendars.get 은 calendar.events 스코프로 403 이므로
@@ -231,7 +247,8 @@ async function fetchGoogleEmail(){
   const s=(j&&j.summary)||'';return /@/.test(s)?s:'';
 }
 // Calendar API 호출. 401 → 만료 처리(재연결 유도), 403 중 scope 부족 → googleNeedConsent(미연결 + 재동의 안내), 그 외 실패 → "상태코드 메시지" 에러
-async function gapiCall(method,url,body){
+// opts.optionalScope: 선택 스코프(캘린더 목록)용 호출 — scope 부족 403 이어도 연결은 끊지 않고 에러만 던진다
+async function gapiCall(method,url,body,opts){
   if(!G.token)throw new Error('연결되지 않았어요');
   if(Date.now()>G.expiresAt){googleExpire();throw new Error('토큰이 만료됐어요. 다시 연결하세요')}
   const r=await fetch(url,{method,headers:{Authorization:'Bearer '+G.token,...(body?{'Content-Type':'application/json'}:{})},body:body?JSON.stringify(body):undefined});
@@ -240,31 +257,65 @@ async function gapiCall(method,url,body){
   let j=null;try{j=await r.json()}catch(e){}
   if(!r.ok){
     const msg=(j&&j.error&&j.error.message)||r.statusText||'오류';
-    if(r.status===403&&isScopeError(j,msg)){glog('403 scope insufficient',{method,url});googleNeedConsent();notifyGoogle()}
+    if(r.status===403&&isScopeError(j,msg)&&!(opts&&opts.optionalScope)){glog('403 scope insufficient',{method,url});googleNeedConsent();notifyGoogle()}
     throw Object.assign(new Error(`${r.status} ${msg}`),{status:r.status});
   }
   return j;
 }
 const gapiFetch=url=>gapiCall('GET',url);
-// 표시 중인 달(ym) ±1개월 범위의 이벤트를 가져온다. 같은 달이면 캐시(G.events) 사용. 월을 옮기면 다시 조회. 끝나면 다시 그린다
+// 읽을 캘린더 목록 (users/me/calendarList). 목록 스코프가 없거나 실패하면 G.calendars=null → primary 별칭 하나만 읽는다. 연결은 유지
+async function loadCalendarList(){
+  G.calendars=null;G.calNote='';
+  if(!G.canList){G.calNote='캘린더 목록 권한이 없어 기본 캘린더만 읽어요. 다시 연결해서 "캘린더 목록 보기" 를 허용하면 공유받은 캘린더도 고를 수 있어요.';return}
+  try{
+    const j=await gapiCall('GET',CAL_API+'users/me/calendarList?maxResults=250&fields=items(id,summary,summaryOverride,backgroundColor,accessRole,primary)',null,{optionalScope:true});
+    const list=(j&&j.items||[]).map(c=>({id:c.id,name:c.summaryOverride||c.summary||c.id,color:c.backgroundColor||'',role:c.accessRole||'reader',primary:!!c.primary}));
+    list.sort((a,b)=>(b.primary?1:0)-(a.primary?1:0)||a.name.localeCompare(b.name));
+    if(!list.some(c=>c.primary))list.unshift({id:'primary',name:'기본',color:'',role:'owner',primary:true});
+    G.calendars=list;
+  }catch(e){
+    if(e&&e.status===403)G.canList=false;
+    G.calNote='캘린더 목록을 불러오지 못했어요: '+(e&&e.message?e.message:String(e))+(e&&e.status===403?' — 다시 연결해서 "캘린더 목록 보기" 를 허용하세요.':'')+' 기본 캘린더만 읽어요.';
+  }
+}
+const PRIMARY_ONLY={id:'primary',name:'',color:'',role:'owner',primary:true};
+const primaryId=()=>{const p=G.calendars&&G.calendars.find(c=>c.primary);return p?p.id:'primary'};
+const isReadOnlyCal=c=>/^(reader|freeBusyReader)$/.test((c&&c.role)||''); // 읽기 권한뿐인 공유 캘린더: 수정·삭제·드래그 불가
+// 읽을 캘린더: 목록이 있으면 primary(항상) + 체크한(목록에 있는) 캘린더, 목록이 없으면 primary 별칭 하나
+function readCalendars(){
+  if(!G.calendars)return [PRIMARY_ONLY];
+  const sel=new Set(getCalSel()||[]);
+  return G.calendars.filter(c=>c.primary||sel.has(c.id));
+}
+// 캐시 무효화: 쓰기 뒤 그 캘린더만(id 없으면 전부) 다시 읽게 한다
+function invalidateGoogle(calId){if(calId)delete G.calCache[calId];else G.calCache={};G.anchor=null}
+// 드래그 PATCH 응답으로 캐시와 화면 목록의 그 이벤트 조각을 갈아끼운다 (재조회 없음)
+function replaceGoogleEvent(ev,pieces){const c=G.calCache[ev.cal?ev.cal.id:primaryId()];if(c)c.events=c.events.filter(x=>x.gid!==ev.gid).concat(pieces);G.events=G.events.filter(x=>x.gid!==ev.gid).concat(pieces)}
+function assembleGoogleEvents(ym){G.events=[].concat(...readCalendars().map(c=>{const k=G.calCache[c.id];return k&&k.ym===ym?k.events:[]}));G.anchor=ym}
+// 표시 중인 달(ym) ±1개월 범위를 읽을 캘린더마다 병렬로 가져온다. 캐시는 캘린더별(G.calCache)이라 체크 해제·재체크는 재조회 없이 조립만 하고,
+// 달이 바뀌거나 새로 체크한 캘린더만 조회한다. 끝나면 다시 그린다
 function ensureGoogleEvents(ym){
-  if(G.status!=='on'||G.anchor===ym||G.loading===ym)return;
-  G.loading=ym;
+  if(G.status!=='on')return;
+  const missing=readCalendars().filter(c=>!(G.calCache[c.id]&&G.calCache[c.id].ym===ym));
+  if(!missing.length){if(G.anchor!==ym)assembleGoogleEvents(ym);return}
+  const key=ym+'|'+missing.map(c=>c.id).join(',');
+  if(G.loading===key)return;
+  G.loading=key;
   const [y,m]=ym.split('-').map(Number);
   const from=new Date(y,m-2,1),to=new Date(y,m+1,1); // [전달 1일, 다다음달 1일)
-  fetchGoogleEvents(from,to)
-    .then(evs=>{if(G.loading!==ym)return;G.events=evs;G.anchor=ym;G.loading=null;G.syncedAt=new Date();notifyGoogle()})
-    .catch(e=>{if(G.loading===ym)G.loading=null;G.error=e&&e.message?e.message:String(e);if(G.status==='on')toast('구글 캘린더 조회 실패: '+G.error);else if(G.status==='expired')toast(G.error);if(onGoogleChange)onGoogleChange()});
+  Promise.all(missing.map(c=>fetchGoogleEvents(c,from,to).then(evs=>{G.calCache[c.id]={ym,events:evs}})))
+    .then(()=>{if(G.loading!==key)return;G.loading=null;assembleGoogleEvents(ym);G.syncedAt=new Date();notifyGoogle()})
+    .catch(e=>{if(G.loading===key)G.loading=null;G.error=e&&e.message?e.message:String(e);if(G.status==='on')toast('구글 캘린더 조회 실패: '+G.error);else if(G.status==='expired')toast(G.error);if(onGoogleChange)onGoogleChange()});
 }
-async function fetchGoogleEvents(from,to){
+async function fetchGoogleEvents(cal,from,to){
   const out=[];let pageToken='';
   do{
-    const u=new URL('https://www.googleapis.com/calendar/v3/calendars/primary/events');
+    const u=new URL(calEventsUrl(cal.id));
     u.searchParams.set('timeMin',from.toISOString());u.searchParams.set('timeMax',to.toISOString());
     u.searchParams.set('singleEvents','true');u.searchParams.set('orderBy','startTime');u.searchParams.set('maxResults','2500');
     if(pageToken)u.searchParams.set('pageToken',pageToken);
     const j=await gapiFetch(u.toString());
-    for(const it of j.items||[])out.push(...toLocalEvents(it));
+    for(const it of j.items||[])out.push(...toLocalEvents(it,cal));
     pageToken=j.nextPageToken||'';
   }while(pageToken);
   return out;
@@ -272,9 +323,9 @@ async function fetchGoogleEvents(from,to){
 // 구글 이벤트 → 화면용 조각들 ({id,title,startDate,endDate,startTime,endTime} + google:true, gid, raw, allDay, recurring).
 // 종일은 한 조각(범위), end.date 는 exclusive 라 하루 뺀다. 여러 날에 걸친 시간 이벤트는 날짜별 조각(첫날 start~24:00, 중간 00:00~24:00, 마지막 00:00~end)
 // 으로 나눠 표시하고, 편집은 raw 의 실제 시작·끝으로 한다. cancelled 는 버린다
-function toLocalEvents(it){
+function toLocalEvents(it,cal){ // cal: 이 이벤트가 속한 캘린더 항목({id,name,role,primary}, 수정·삭제 URL 과 툴팁에 씀)
   if(!it||it.status==='cancelled')return [];
-  const base={gid:it.id,title:it.summary||'(제목 없음)',note:it.description||'',google:true,raw:it,recurring:!!it.recurringEventId,link:it.htmlLink||''};
+  const base={gid:it.id,title:it.summary||'(제목 없음)',note:it.description||'',google:true,raw:it,recurring:!!it.recurringEventId,link:it.htmlLink||'',cal:cal||null};
   if(it.start&&it.start.date){
     const e=parse((it.end&&it.end.date)||it.start.date);e.setDate(e.getDate()-1);
     const endDate=ymd(e)<it.start.date?it.start.date:ymd(e);
@@ -314,7 +365,7 @@ async function migrateLocalEvents(){
       S.events=S.events.filter(x=>x.id!==ev.id);save();moved++;
     }catch(e){failed=e&&e.message?e.message:String(e);break}
   }
-  G.anchor=null;
+  invalidateGoogle(primaryId());
   toast(failed?`로컬 약속 ${moved}개를 옮긴 뒤 실패했어요: ${failed}`:`로컬 약속 ${moved}개를 구글 캘린더로 옮겼어요`);
   notifyGoogle();
 }
@@ -454,7 +505,8 @@ function refreshPalette(){
 }
 // 약속 블록·칩 인라인 스타일: 설정의 약속 색 하나로 채우고, 밝은 색이면 글자를 어둡게
 // 블록·칩 툴팁: 제목(+겹침 표시) 뒤에 메모의 첫 줄(비어 있지 않은 첫 줄). 조각은 원본(src)의 메모
-function eventTip(ev,extra){const raw=ev.note||(ev.src&&ev.src.note)||'';const first=raw.split(/\r?\n/).map(l=>l.trim()).find(l=>l);return ev.title+(extra||'')+(first?'\n'+first:'')}
+// 구글 일정은 제목 뒤에 캘린더 이름(기본 캘린더는 생략)
+function eventTip(ev,extra){const raw=ev.note||(ev.src&&ev.src.note)||'';const first=raw.split(/\r?\n/).map(l=>l.trim()).find(l=>l);const cal=ev.cal&&!ev.cal.primary&&ev.cal.name?' · '+ev.cal.name:'';return ev.title+(extra||'')+cal+(first?'\n'+first:'')}
 function eventStyle(mode){const ci=cfg('eventColor')%ECOL.length;const hsl=EBASE[ci];
   if(mode==='chip')return '--ec:'+ECOL[ci]; // 월간 칩: 색만 넘기고 옅은 배경·진한 글자는 CSS 가 섞음 (iOS 월간 칩)
   return 'background:'+ECOL[ci]+(hsl&&hsl[2]>.62?';color:#14181d':';color:#fff')}
@@ -693,7 +745,7 @@ function timeGridBody(dates,key){
       // 약속 블록 조작 (편집 그리드 루틴 블록과 같은 규칙): 본체 드래그=이동(주간은 다른 날 열로도), 상·하단 6px(.rs)=시작/끝 조절, 30분 스냅, 최소 30분.
       // 5px 미만 움직임은 클릭 → 편집 팝오버 (pointerup 에서 연다, onclick 없음). pointerdown 은 열(드래그 생성)로 전파하지 않는다.
       // 종일(위 줄)과 조각(seg: 자정 넘김·여러 날 구글 이벤트)은 클릭만. 드래그 중엔 eventConflicts 로 겹침을 계산해 .cf 테두리를 미리 보여준다
-      const movable=!ev.seg;
+      const movable=!ev.seg&&!(ev.cal&&isReadOnlyCal(ev.cal)); // 조각과 읽기 전용 캘린더 일정은 클릭만
       const lbl=h('div',{class:'l'},[(tmp?'임시 · ':'')+(ev.title||'(제목 없음)')]);
       const blk=h('div',{class:'blk evb'+(cf?' cf':'')+segCls+((e-s)>=60?' tall':'')+(movable?' mv':''),'data-src':ev.google?'g':'l','data-id':ev.id,style:`top:${cy((s-H0*60)/60)};height:calc(var(--px) * ${(e-s)/60} - 2px);${eventStyle()}`,title:eventTip(ev,cf?' · 활성 루틴과 겹침':'')},
         [lbl,(e-s)>=60?h('div',{class:'tm'},[ev.startTime+'–'+ev.endTime]):null,movable?h('div',{class:'rs t'}):null,movable?h('div',{class:'rs b'}):null]);
@@ -778,8 +830,8 @@ async function commitEventDrag(ev,ch){
     const raw=ev.raw;const d0=draftFromGoogle(raw);
     const body=toGoogleBody({title:d0.title,note:d0.note,startDate:shift(d0.startDate,ch.dayDelta),endDate:shift(d0.endDate,ch.dayDelta),startTime:ch.startTime,endTime:ch.endTime,allDay:false});
     try{
-      const res=await gapiCall('PATCH',gEventUrl(raw.id),{start:body.start,end:body.end});
-      if(res&&res.id)G.events=G.events.filter(x=>x.gid!==ev.gid).concat(toLocalEvents(res));else G.anchor=null;
+      const res=await gapiCall('PATCH',gEventUrl(raw.id,ev.cal&&ev.cal.id),{start:body.start,end:body.end});
+      if(res&&res.id)replaceGoogleEvent(ev,toLocalEvents(res,ev.cal));else invalidateGoogle(ev.cal&&ev.cal.id);
       pendingSettle=ev.id;render();
     }catch(e){render();toast('구글 캘린더 오류: '+(e&&e.message?e.message:String(e)))}
     return;
@@ -1116,11 +1168,14 @@ function openEvent(ev,dateKey,preset,anchor){ // preset: 드래그 생성 시 {s
     h('label',null,['끝 시간',inp('endTime','time')]),
     h('label',{class:'full'},['메모',h('textarea',{rows:'3',placeholder:'여러 줄 메모 (구글 캘린더의 설명과 같이 저장돼요)',oninput:e=>{draft.note=e.target.value}},[draft.note||''])]),
   ]);
-  const note=gmode?(raw?(raw.recurringEventId?'구글 캘린더 반복 일정 — 이 일정만 수정·삭제돼요.':draft.allDay?'구글 캘린더 종일 일정 — 시간을 00:00~23:59 그대로 두면 종일로 저장돼요.':'구글 캘린더 일정이에요. 저장하면 바로 반영돼요.'):'연결된 구글 캘린더(primary)에 추가돼요.')
+  const calId=raw?(ev.cal&&ev.cal.id):null; // 수정·삭제는 이벤트가 속한 캘린더로, 추가는 primary
+  const calName=raw&&ev.cal&&!ev.cal.primary&&ev.cal.name?`「${ev.cal.name}」 캘린더`:'구글 캘린더';
+  const readOnly=!!(raw&&ev.cal&&isReadOnlyCal(ev.cal)); // 읽기 권한뿐인 공유 캘린더: 안내 + 저장·삭제 비활성
+  const note=gmode?(raw?(readOnly?`${calName}는 읽기 전용이라 수정·삭제할 수 없어요.`:raw.recurringEventId?`${calName} 반복 일정 — 이 일정만 수정·삭제돼요.`:draft.allDay?`${calName} 종일 일정 — 시간을 00:00~23:59 그대로 두면 종일로 저장돼요.`:`${calName} 일정이에요. 저장하면 바로 반영돼요.`):'연결된 구글 캘린더(기본)에 추가돼요.')
     :(G.status==='on'?'임시(로컬) 약속이에요. 설정 > 구글 탭에서 구글 캘린더로 옮길 수 있어요.':null);
   const setBusy=on=>{busy=on;md.querySelectorAll('button').forEach(b=>b.disabled=on)};
   const fail=e=>{setBusy(false);toast('구글 캘린더 오류: '+(e&&e.message?e.message:String(e)))}; // 로컬 상태는 그대로
-  const done=msg=>{close();G.anchor=null;render();toast(msg)}; // 성공 후 해당 월 재조회
+  const done=msg=>{close();invalidateGoogle(calId||primaryId());render();toast(msg)}; // 성공 후 그 캘린더만 다시 조회
   const validate=()=>{
     if(!draft.startDate||!draft.endDate||!draft.startTime||!draft.endTime){toast('날짜와 시간을 채워주세요');return false}
     if(draft.endDate<draft.startDate){toast('종료일이 시작일보다 앞설 수 없어요');return false}
@@ -1132,18 +1187,19 @@ function openEvent(ev,dateKey,preset,anchor){ // preset: 드래그 생성 시 {s
     note?h('p',{class:'hint',style:'margin:-6px 0 10px'},[note]):null,
     form,cfBox,
     h('div',{class:'acts'},[
-      isNew?null:h('button',{class:'quiet danger',onclick:async()=>{
-        if(gmode){setBusy(true);try{await gapiCall('DELETE',gEventUrl(raw.id));done('구글 캘린더에서 삭제했어요')}catch(e){fail(e)}}
+      isNew?null:h('button',{class:'quiet danger',...(readOnly?{disabled:''}:{}),onclick:async()=>{
+        if(gmode){if(readOnly){toast('읽기 전용 캘린더의 일정이에요');return}setBusy(true);try{await gapiCall('DELETE',gEventUrl(raw.id,calId));done('구글 캘린더에서 삭제했어요')}catch(e){fail(e)}}
         else{S.events=S.events.filter(x=>x.id!==ev.id);save();close();render()}
       }},['삭제']),
       h('span',{class:'sp'}),
       h('button',{onclick:close},['취소']),
-      h('button',{class:'primary',onclick:async()=>{
+      h('button',{class:'primary',...(readOnly?{disabled:''}:{}),onclick:async()=>{
         if(!validate())return;
         if(gmode){
+          if(readOnly){toast('읽기 전용 캘린더의 일정이에요');return}
           setBusy(true);
           try{
-            if(isNew)await gapiCall('POST',EV_BASE,toGoogleBody(draft));else await gapiCall('PATCH',gEventUrl(raw.id),toGoogleBody(draft));
+            if(isNew)await gapiCall('POST',EV_BASE,toGoogleBody(draft));else await gapiCall('PATCH',gEventUrl(raw.id,calId),toGoogleBody(draft));
             done(isNew?'구글 캘린더에 추가했어요':'구글 캘린더에 저장했어요');
           }catch(e){fail(e)}
         }else{
@@ -1277,7 +1333,22 @@ function openSettings(tab){
     if(st==='on'){
       el.appendChild(h('div',{class:'frow'},[h('span',null,['연결됨: ',h('b',null,[G.email||'(이메일 확인 불가)'])])]));
       el.appendChild(h('p',{class:'hint'},[G.loading?'이벤트를 가져오는 중…':G.syncedAt?`마지막 조회 ${pad(G.syncedAt.getHours())}:${pad(G.syncedAt.getMinutes())} · 이벤트 ${G.events.length}개 (표시 중인 달 ±1개월)`:'월간·주간 뷰를 열면 이벤트를 가져와요.']));
-      el.appendChild(h('div',{class:'frow'},[h('button',{onclick:()=>{G.anchor=null;render();drawPane()}},['새로고침']),h('button',{class:'danger',onclick:googleDisconnect},['연결 해제'])]));
+      // 읽을 캘린더: calendarList 의 각 항목을 체크박스(이름 + 색 점)로. 기본 캘린더는 항상 읽으므로 체크 고정. 선택은 GCALS_KEY. 바꾸면 그 캘린더만 조회(캐시) 후 다시 그림
+      el.appendChild(h('div',{class:'sect'},['읽을 캘린더']));
+      if(G.calendars){
+        const sel=new Set(getCalSel()||[]);const list=h('div',{class:'callist'});
+        G.calendars.forEach(c=>list.appendChild(h('label',{class:'chk'},[
+          h('input',{type:'checkbox',...(c.primary||sel.has(c.id)?{checked:''}:{}),...(c.primary?{disabled:''}:{}),onchange:e=>{const s=new Set(getCalSel()||[]);if(e.target.checked)s.add(c.id);else s.delete(c.id);setCalSel([...s]);G.anchor=null;render();drawPane()}}),
+          h('i',{class:'cdot',style:'background:'+(c.color||'var(--muted)')}),c.name,
+          c.primary?h('span',{class:'hint',style:'margin:0 0 0 2px'},['(기본 · 약속 추가 대상)']):isReadOnlyCal(c)?h('span',{class:'hint',style:'margin:0 0 0 2px'},['읽기 전용']):null
+        ])));
+        el.appendChild(list);
+        el.appendChild(h('p',{class:'hint'},['체크한 캘린더의 일정을 월간·주간·일간에 보여주고 겹침 검사에 넣어요. 약속 추가는 기본 캘린더에, 수정·삭제는 그 일정이 속한 캘린더에 반영돼요. 읽기 전용 캘린더의 일정은 보기만 해요.']));
+      }else{
+        el.appendChild(h('div',{class:'cfbox'},[G.calNote||'캘린더 목록이 없어요.']));
+        if(!G.canList)el.appendChild(h('div',{class:'frow'},[h('button',{class:'primary',onclick:()=>googleConnect({consent:true})},['다시 연결 (권한 허용)'])]));
+      }
+      el.appendChild(h('div',{class:'frow'},[h('button',{onclick:async()=>{invalidateGoogle();await loadCalendarList();render();drawPane()}},['새로고침']),h('button',{class:'danger',onclick:googleDisconnect},['연결 해제'])]));
       if(S.events.length){
         el.appendChild(h('div',{class:'sect'},['임시(로컬) 약속']));
         el.appendChild(h('p',{class:'hint'},[`미연결 상태에서 만든 로컬 약속 ${S.events.length}개가 남아 있어요. 구글 캘린더로 옮기면 로컬에서는 지워져요.`]));
@@ -1290,7 +1361,7 @@ function openSettings(tab){
       el.appendChild(h('div',{class:'frow'},[h('button',{class:'primary',onclick:()=>googleConnect()},[st!=='expired'?'Google 연결':G.needConsent?'다시 연결 (권한 허용)':'다시 연결'])]));
       if(G.error)el.appendChild(h('p',{class:'hint danger'},[G.error]));
     }
-    el.appendChild(h('p',{class:'hint'},['연결하면 약속이 구글 캘린더(primary)에 바로 저장·수정·삭제되고, 표시 중인 달 ±1개월 범위를 읽어 월간·주간·일간에 보여줘요. 반복 일정은 이 일정만 편집돼요. 토큰은 메모리에만 두고 저장하지 않아요. 연결한 적이 있으면 새로고침할 때 화면 없이 조용히 다시 연결을 시도하고, 실패하면 미연결 상태로 두고 "다시 연결" 만 보여줘요.']));
+    el.appendChild(h('p',{class:'hint'},['연결하면 약속 추가는 기본 캘린더에, 수정·삭제는 그 일정이 속한 캘린더에 바로 반영되고, 체크한 캘린더들의 표시 중인 달 ±1개월 범위를 읽어 월간·주간·일간에 보여줘요. 반복 일정은 이 일정만 편집돼요. 토큰은 메모리에만 두고 저장하지 않아요. 연결한 적이 있으면 새로고침할 때 화면 없이 조용히 다시 연결을 시도하고, 실패하면 미연결 상태로 두고 "다시 연결" 만 보여줘요.']));
     el.appendChild(h('p',{class:'hint'},['Chrome 이 서드파티 쿠키를 차단하면 조용한 재연결이 실패해요. 주소창 오른쪽의 쿠키(눈 모양) 아이콘 → 서드파티 쿠키 허용, 또는 chrome://settings/content/siteData 에서 이 사이트를 "쿠키 허용" 에 추가하세요. 팝업 차단도 같은 곳(chrome://settings/content/popups)에서 허용하면 돼요.']));
   }
   const md=h('div',{class:'md settings',role:'dialog','aria-label':'설정'},[

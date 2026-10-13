@@ -1,0 +1,145 @@
+<!-- variants: s=list s=nolist -->
+<!DOCTYPE html>
+<html lang="ko"><head><meta charset="utf-8"><title>읽을 캘린더 선택</title>
+<link rel="stylesheet" href="../styles.css"></head>
+<body><div class="app" id="app"></div>
+<script src="lib.js"></script>
+<script>
+// GIS·fetch 스텁. list: 토큰에 목록 스코프가 있어 calendarList 를 받고 체크박스로 읽을 캘린더를 고른다.
+// nolist: 목록 스코프 없는 토큰 → primary 만 읽고 "다시 연결 (권한 허용)" → prompt:'consent' → 두 스코프 토큰 → 목록 로드
+const EV='https://www.googleapis.com/auth/calendar.events',LS='https://www.googleapis.com/auth/calendar.calendarlist.readonly',FULL='https://www.googleapis.com/auth/calendar';
+const tokens=V==='nolist'?[{access_token:'t1',expires_in:3599,scope:EV},{access_token:'t2',expires_in:3599,scope:EV+' '+LS}]:[{access_token:'t1',expires_in:3599,scope:EV+' '+LS}];
+let curScope='';const reqs=[];
+window.GOOGLE_CLIENT_ID='test-client';
+window.google={accounts:{oauth2:{initTokenClient(cfg){return {requestAccessToken(req){reqs.push(req);log('requestAccessToken',req);const t=tokens.shift();if(t)curScope=t.scope;setTimeout(()=>cfg.callback(t||{error:'cancelled'}),0)}}},revoke(){}}}};
+const PRIMARY='me@example.com',TEAM='team@group.calendar.google.com',RO='ro@group.calendar.google.com';
+const calList={items:[{id:TEAM,summary:'팀 캘린더',backgroundColor:'#f83a22',accessRole:'writer'},{id:PRIMARY,summary:'나',primary:true,backgroundColor:'#9fe1e7',accessRole:'owner'},{id:RO,summary:'읽기전용',backgroundColor:'#7986cb',accessRole:'reader'}]};
+const EVENTS={};const calls=[];
+const scope403={error:{code:403,message:'Request had insufficient authentication scopes.',errors:[{reason:'insufficientPermissions'}],status:'PERMISSION_DENIED'}};
+window.fetch=(url,init)=>{
+  const m=(init&&init.method)||'GET';const body=init&&init.body?JSON.parse(init.body):null;const c={m,url,body};calls.push(c);log('fetch',m,url);
+  const u=new URL(url);const path=decodeURIComponent(u.pathname);
+  const ok=(b,st)=>{c.status=st||200;return Promise.resolve({ok:true,status:c.status,json:()=>b===undefined?Promise.reject(new Error('no body')):Promise.resolve(b)})};
+  const err=(st,b)=>{c.status=st;return Promise.resolve({ok:false,status:st,statusText:'err',json:()=>Promise.resolve(b)})};
+  if(/\/users\/me\/calendarList$/.test(path))return (curScope.includes(LS)||curScope.includes(FULL))?ok(calList):err(403,scope403);
+  const mm=/\/calendars\/([^/]+)\/events(?:\/([^/]+))?$/.exec(path);if(!mm)return err(404,{error:{message:'not found: '+path}});
+  const calId=mm[1]==='primary'?PRIMARY:mm[1],evId=mm[2];
+  if(m==='GET'&&u.searchParams.get('fields')==='summary')return ok({summary:PRIMARY});
+  if(m==='GET')return ok({items:EVENTS[calId]||[]});
+  if(m==='POST'){const e=Object.assign({id:'new'+calls.length},body);(EVENTS[calId]=EVENTS[calId]||[]).push(e);return ok(e)}
+  if(m==='PATCH'){const e=(EVENTS[calId]||[]).find(x=>x.id===evId);if(!e)return err(404,{error:{message:'no event'}});Object.assign(e,body);return ok(e)}
+  if(m==='DELETE'){EVENTS[calId]=(EVENTS[calId]||[]).filter(x=>x.id!==evId);return ok(undefined,204)}
+  return err(500,{error:{message:'unexpected'}});
+};
+
+run(async()=>{
+  // 2026-10-12(월) 주. 루틴: 학교 수요일 13:00–14:00 → 팀 회의(수 13~14)와 겹침
+  seed({pages:[{id:'p1',name:'학교',color:0,active:true,colorByLabel:false,items:[{id:'i1',day:2,start:'13:00',end:'14:00',label:'수업'}]}],events:[],
+    settings:{defaultStart:'10:00',defaultDur:60,weekStart:'mon',dayStart:6,dayEnd:24}});
+  await loadApp();
+  const dt=(date,time)=>{const x=RC.parse(date);x.setMinutes(RC.toMin(time));return x.toISOString()};
+  EVENTS[PRIMARY]=[{id:'p1e',summary:'내 일정',start:{dateTime:dt('2026-10-13','10:00')},end:{dateTime:dt('2026-10-13','11:00')}}];
+  EVENTS[TEAM]=[{id:'t1',summary:'팀 회의',start:{dateTime:dt('2026-10-14','13:00')},end:{dateTime:dt('2026-10-14','14:00')}}];
+  EVENTS[RO]=[{id:'r1',summary:'읽기전용 일정',start:{dateTime:dt('2026-10-15','09:00')},end:{dateTime:dt('2026-10-15','10:00')}}];
+  RC.view.type='month';RC.view.ym='2026-10';RC.render();await sleep(20);
+  const pane=()=>text('.md.settings');
+  const getsFor=id=>calls.filter(c=>c.m==='GET'&&c.url.includes('/calendars/'+encodeURIComponent(id)+'/events?timeMin'));
+  const listCalls=()=>calls.filter(c=>/calendarList/.test(c.url));
+  const boxes=()=>[...document.querySelectorAll('.md.settings .callist input[type=checkbox]')];
+  const boxFor=name=>boxes().find(b=>b.parentElement.textContent.includes(name)); // 목록은 기본 캘린더 다음 이름순이라 이름으로 찾는다
+  const chip=t=>[...document.querySelectorAll('.mgrid .ev')].find(e=>e.textContent.includes(t));
+  const openGoogleTab=async()=>{btn('⚙ 설정').click();await sleep(40);btn('구글').click();await sleep(30)};
+  const closeTab=async()=>{btn('닫기').click();await sleep(40)};
+  const esc=async()=>{document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape'}));await sleep(30)};
+  await openGoogleTab();btn('Google 연결').click();await sleep(300);
+
+  if(V==='list'){
+    check('연결됨',/연결됨: me@example\.com/.test(pane()),pane().slice(0,120));
+    check('calendarList 한 번(200)',listCalls().length===1&&listCalls()[0].status===200,listCalls().map(c=>c.status));
+    check('체크박스 3개: 기본은 체크+고정, 나머지 해제',boxes().length===3&&boxes()[0].checked&&boxes()[0].disabled&&!boxes()[1].checked&&!boxes()[2].checked,boxes().map(b=>b.checked+'/'+b.disabled));
+    check('기본 캘린더가 맨 앞, 이름 표시',/\(기본 · 약속 추가 대상\)/.test(pane())&&/팀 캘린더/.test(pane())&&/읽기전용 읽기 전용/.test(pane()),pane().slice(0,400));
+    check('색 점',[...document.querySelectorAll('.md.settings .cdot')].some(d=>/f83a22|248, 58, 34/i.test(d.getAttribute('style')||'')),[...document.querySelectorAll('.md.settings .cdot')].map(d=>d.getAttribute('style')));
+    check('읽기는 primary(이메일 id)만 조회',getsFor(PRIMARY).length===1&&getsFor(TEAM).length===0&&getsFor(RO).length===0,calls.map(c=>c.m+' '+c.url));
+    await closeTab();
+    check('월간: 내 일정만 보임',!!chip('내 일정')&&!chip('팀 회의'));
+    // 팀 캘린더 체크 → 그 캘린더만 조회
+    await openGoogleTab();boxFor('팀 캘린더').click();await sleep(200);
+    check('팀 캘린더만 추가 조회(primary 재조회 없음)',getsFor(TEAM).length===1&&getsFor(PRIMARY).length===1,{team:getsFor(TEAM).length,primary:getsFor(PRIMARY).length});
+    check('선택이 localStorage 에',(JSON.parse(localStorage.getItem('routine-cal-google-cals')||'[]')).includes(TEAM));
+    check('탭에 체크 상태 반영',boxFor('팀 캘린더').checked);
+    await closeTab();
+    check('월간: 팀 회의 표시 + 겹침 점',!!chip('팀 회의')&&!!chip('팀 회의').querySelector('.cf'));
+    check('툴팁에 캘린더 이름(기본 캘린더는 생략)',/팀 회의 · 팀 캘린더/.test(chip('팀 회의').title)&&chip('내 일정').title.split('\n')[0]==='내 일정',[chip('팀 회의').title,chip('내 일정').title]);
+    const team=()=>RC.G.events.find(e=>e.gid==='t1');
+    check('충돌 검사 대상(eventConflicts 1건)',!!team()&&RC.eventConflicts(team()).length===1);
+    RC.view.type='week';RC.view.weekStart=new Date(2026,9,12);RC.render();await sleep(30);
+    const wb=()=>[...document.querySelectorAll('.wgrid .blk.evb')].find(b=>b.title.startsWith('팀 회의'));
+    check('주간: 블록 + 경고 테두리 + 드래그 가능(writer)',!!wb()&&wb().classList.contains('cf')&&wb().classList.contains('mv'));
+    RC.view.type='day';RC.view.day='2026-10-14';RC.render();await sleep(30);
+    check('일간: 블록',!!wb());
+    RC.view.type='month';RC.render();await sleep(30);
+    // 체크 해제 → 사라짐, 조회 없음. 재체크 → 캐시로 바로, 조회 없음
+    const n0=calls.length;
+    await openGoogleTab();boxFor('팀 캘린더').click();await sleep(80);await closeTab();
+    check('해제: 팀 회의 사라짐, 내 일정 유지, 조회 없음',!chip('팀 회의')&&!!chip('내 일정')&&calls.length===n0,{calls:calls.length-n0});
+    await openGoogleTab();boxFor('팀 캘린더').click();await sleep(80);await closeTab();
+    check('재체크: 캐시로 바로 표시, 조회 없음',!!chip('팀 회의')&&calls.length===n0,{calls:calls.length-n0});
+    // 수정 → 팀 캘린더 URL 로 PATCH, 그 캘린더만 재조회
+    chip('팀 회의').click();await sleep(40);
+    let md=document.querySelector('.md:not(.settings)');
+    const mdText=()=>md?md.innerText.replace(/\s+/g,' ').slice(0,120):'';
+    check('편집 폼 안내에 캘린더 이름',!!md&&/「팀 캘린더」 캘린더 일정이에요/.test(md.innerText),mdText());
+    const ti=md.querySelector('input[type=text]');ti.value='팀 회의2';ti.dispatchEvent(new Event('input',{bubbles:true}));
+    const before={p:getsFor(PRIMARY).length,t:getsFor(TEAM).length};
+    btn('저장').click();await sleep(200);
+    const patch=calls.find(c=>c.m==='PATCH');
+    check('PATCH 는 팀 캘린더 URL',!!patch&&patch.url.includes('/calendars/'+encodeURIComponent(TEAM)+'/events/t1'),patch&&patch.url);
+    check('저장 뒤 팀 캘린더만 재조회',getsFor(TEAM).length===before.t+1&&getsFor(PRIMARY).length===before.p,{before,after:{p:getsFor(PRIMARY).length,t:getsFor(TEAM).length}});
+    check('수정 반영',!!chip('팀 회의2'));
+    // 삭제 → 팀 캘린더 DELETE
+    chip('팀 회의2').click();await sleep(40);btn('삭제').click();await sleep(200);
+    const del=calls.find(c=>c.m==='DELETE');
+    check('DELETE 는 팀 캘린더 URL',!!del&&del.url.includes('/calendars/'+encodeURIComponent(TEAM)+'/events/t1'),del&&del.url);
+    check('삭제 반영',!chip('팀 회의2'));
+    // 추가 → primary POST
+    btn('+ 약속').click();await sleep(40);md=document.querySelector('.md:not(.settings)');
+    check('추가 폼 안내: 기본 캘린더',!!md&&/구글 캘린더\(기본\)에 추가/.test(md.innerText));
+    const nt=md.querySelector('input[type=text]');nt.value='새 약속';nt.dispatchEvent(new Event('input',{bubbles:true}));btn('추가').click();await sleep(200);
+    const post=calls.find(c=>c.m==='POST');
+    check('POST 는 primary URL',!!post&&/\/calendars\/primary\/events$/.test(post.url),post&&post.url);
+    check('추가 뒤 primary 재조회 + 표시',getsFor(PRIMARY).length===before.p+1&&!!chip('새 약속'));
+    // 읽기 전용 캘린더: 보이고 겹침 검사되지만 수정·삭제·드래그 불가
+    await openGoogleTab();boxFor('읽기전용').click();await sleep(200);await closeTab();
+    check('읽기 전용 캘린더 일정 표시',!!chip('읽기전용 일정'));
+    chip('읽기전용 일정').click();await sleep(40);md=document.querySelector('.md:not(.settings)');
+    check('읽기 전용 안내 + 저장·삭제 비활성',!!md&&/읽기 전용이라 수정·삭제할 수 없어요/.test(md.innerText)&&btn('저장').disabled&&btn('삭제').disabled,mdText());
+    await esc();
+    RC.view.type='week';RC.view.weekStart=new Date(2026,9,12);RC.render();await sleep(30);
+    const rb=[...document.querySelectorAll('.wgrid .blk.evb')].find(b=>b.title.startsWith('읽기전용 일정'));
+    check('읽기 전용 블록은 드래그 불가(.mv 없음)',!!rb&&!rb.classList.contains('mv')&&!rb.querySelector('.rs'));
+    // 새로고침: 목록 + 선택 캘린더 전부 재조회
+    const lc=listCalls().length,gp=getsFor(PRIMARY).length,gt=getsFor(TEAM).length;
+    await openGoogleTab();btn('새로고침').click();await sleep(300);
+    check('새로고침: 목록 + 이벤트 재조회',listCalls().length===lc+1&&getsFor(PRIMARY).length===gp+1&&getsFor(TEAM).length===gt+1);
+    // 연결 해제 → 선택 키 삭제
+    btn('연결 해제').click();await sleep(50);
+    check('해제 시 선택 키 삭제, 구글 이벤트 제거',localStorage.getItem('routine-cal-google-cals')===null&&RC.G.events.length===0&&RC.G.calendars===null);
+  }
+
+  if(V==='nolist'){
+    check('연결됨(목록 권한 없이)',/연결됨: me@example\.com/.test(pane()),pane().slice(0,120));
+    check('calendarList 호출 없음',listCalls().length===0);
+    check('목록 없음 안내 + "다시 연결 (권한 허용)"',/목록 권한이 없어/.test(pane())&&!!btn('다시 연결 (권한 허용)'),pane().slice(0,300));
+    check('읽기는 primary 별칭으로',calls.some(c=>c.m==='GET'&&/\/calendars\/primary\/events\?timeMin/.test(c.url)),calls.map(c=>c.url));
+    await closeTab();
+    check('월간: 내 일정 표시',!!chip('내 일정'));
+    await openGoogleTab();btn('다시 연결 (권한 허용)').click();await sleep(300);
+    check('재동의 요청은 prompt consent',reqs.length===2&&reqs[1].prompt==='consent',reqs[1]);
+    check('목록 로드됨(체크박스 3개)',listCalls().length===1&&boxes().length===3,{list:listCalls().length,boxes:boxes().length});
+    check('여전히 연결됨',/연결됨: me@example\.com/.test(pane()));
+    boxFor('팀 캘린더').click();await sleep(200);await closeTab();
+    check('이제 공유 캘린더도 읽힘',!!chip('팀 회의')&&getsFor(TEAM).length===1);
+  }
+});
+</script>
+</body></html>

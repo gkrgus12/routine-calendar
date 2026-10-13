@@ -10,6 +10,7 @@
 | `t-backup.html` | 백업: `validateBackup` 통과·거부·정규화, `mergeBackup`, 설정 모달 백업 탭 파일 선택 → 미리보기 → 합치기, 깨진 파일 거부 |
 | `t-google-scope.html` | 구글 스코프 4시나리오 (변형 `s=A` 정상, `s=B` 권한 없는 토큰, `s=C` API 403, `s=D` 조용한 재연결). GIS·fetch 스텁, 실제 구글 접근 없음 |
 | `t-event-drag.html` | 주간·일간 약속 블록 드래그 이동·리사이즈 (변형 `s=local` 로컬 약속, `s=google` 구글 이벤트 PATCH 스텁) |
+| `t-calendars.html` | 읽을 캘린더 선택 (변형 `s=list` 목록 스코프 있음, `s=nolist` 없음 → 재동의). calendarList·events 스텁 |
 | `t-popover.html` | 팝오버 배치 (변형 `s=wide` 1400×900, `s=narrow` 600×800 = 하단 시트) |
 
 새 하네스는 `t-<이름>.html` 로 만들고 `<script src="lib.js">` 다음에 `run(async()=>{ seed(...); await loadApp(); check('이름', 조건, 부가정보) })`. 변형이 필요하면 파일 첫 줄에 `<!-- variants: s=A s=B@600x800 -->`.

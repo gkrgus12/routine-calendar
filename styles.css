@@ -381,6 +381,9 @@ button[disabled]:active{transform:none}
 .wgrid .blk.evb.dragging.cf{box-shadow:var(--eband),inset 0 0 0 2px var(--warn),0 10px 24px rgba(0,0,0,.32)}
 .wgrid .blk.evb.settling{z-index:4;box-shadow:var(--eband),0 8px 20px rgba(0,0,0,.28)}
 .wgrid .blk.evb.settling.cf{box-shadow:var(--eband),inset 0 0 0 2px var(--warn),0 8px 20px rgba(0,0,0,.28)}
+/* 설정 > 구글 > 읽을 캘린더 목록: 체크박스 + 색 점 + 이름 */
+.callist .chk{margin:0 0 6px}
+.cdot{display:inline-block;width:10px;height:10px;border-radius:50%;flex:none;border:1px solid rgba(0,0,0,.12)}
 
 /* 3차: 약속 추가·편집은 데스크톱 폭에서 팝오버(기준점 옆, 위쪽 모서리를 기준점 상단에, 360px, 화살표·딤 없음). 상단바 ‹ 오늘 › 묶음은 .navpair (4차 참고) */
 .bar .navpair{display:inline-flex;align-items:stretch;flex:none;background:var(--panel);border-radius:999px;box-shadow:0 1px 2px rgba(0,0,0,.08),0 0 0 1px rgba(0,0,0,.05);overflow:hidden}

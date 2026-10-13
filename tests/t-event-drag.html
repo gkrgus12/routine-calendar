@@ -22,8 +22,9 @@ run(async()=>{
     RAW.g1={id:'g1',summary:'G 하나',start:{dateTime:dt('2026-10-12','09:00')},end:{dateTime:dt('2026-10-12','10:00')}};
     RAW.g2={id:'g2',summary:'G 종일',start:{date:'2026-10-13'},end:{date:'2026-10-14'}};
     RAW.g3={id:'g3',summary:'G 이틀',start:{dateTime:dt('2026-10-14','22:00')},end:{dateTime:dt('2026-10-15','02:00')}};
-    const G=RC.G;G.status='on';G.token='tok';G.expiresAt=Date.now()+3600e3;G.email='me@example.com';G.anchor='2026-10';
-    G.events=[].concat(...Object.values(RAW).map(r=>RC.toLocalEvents(r)));
+    // 캘린더 목록 없음(G.calendars=null) → 'primary' 별칭 하나. 캐시를 직접 채워 두면 ensureGoogleEvents 가 조회 없이 조립한다
+    const G=RC.G;G.status='on';G.token='tok';G.expiresAt=Date.now()+3600e3;G.email='me@example.com';
+    G.calCache={primary:{ym:'2026-10',events:[].concat(...Object.values(RAW).map(r=>RC.toLocalEvents(r)))}};
     window.fetch=(url,init)=>{
       const m=(init&&init.method)||'GET';const body=init&&init.body?JSON.parse(init.body):null;const c={m,url,body};calls.push(c);log('fetch',m,url,body);
       if(m==='PATCH'){

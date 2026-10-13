@@ -34,7 +34,7 @@
 ### 설정 (사이드바 맨 아래 ⚙, 하단 시트, 바꾸는 즉시 저장)
 - 일반: 테마(시스템/라이트/다크), 주 시작 요일(월/일), 주간·편집 그리드 시간 범위(시작 0~23시, 끝 1~24시), 루틴 블록 불투명도(5~100%), 시간당 높이(높이 맞춤 / 고정 24~80px).
 - 약속: 새 약속 기본 시작 시간, 기본 길이(분, 최소 5), 약속 색(6색 중 하나, 모든 약속에 공통).
-- 구글: 연결 / 연결 해제 / 새로고침, 로그인 유지 체크, 로컬 약속을 구글로 옮기기, 서드파티 쿠키·팝업 허용 안내.
+- 구글: 연결 / 연결 해제 / 새로고침(목록·이벤트 재조회), 로그인 유지 체크, 읽을 캘린더 체크박스(이름·색 점, 기본 캘린더는 고정, 읽기 전용 표시), 로컬 약속을 구글로 옮기기, 서드파티 쿠키·팝업 허용 안내.
 - 백업: JSON 내려받기(`routine-calendar-YYYY-MM-DD.json`), 파일 선택 → 미리보기(페이지·루틴·약속 수) → 덮어쓰기(`confirm`) 또는 합치기.
 
 ### 기타
@@ -53,6 +53,7 @@
 | `routine-cal-view` | `"day"` \| `"week"` \| `"month"` | 마지막 캘린더 뷰. 백업에 포함되지 않음 |
 | `routine-cal-google-linked` | `"1"` | 구글에 연결한 적 있음 플래그(로드 시 조용한 재연결 근거) |
 | `routine-cal-google-hint` | 이메일 문자열 | 마지막 연결 계정. GIS `hint` 로 넘겨 계정 선택을 건너뜀 |
+| `routine-cal-google-cals` | 캘린더 id JSON 배열 | 읽을 캘린더 선택(기본 캘린더는 항상 읽음). 해제 시 삭제 |
 
 구글 토큰은 메모리(`G.token`)에만 있고 어디에도 저장하지 않는다.
 
@@ -108,22 +109,24 @@
 
 ### 구글 캘린더에 저장되는 것
 - 연결 상태에서 만든 약속은 로컬에 저장되지 않고 primary 캘린더의 이벤트로 저장된다. 보내는 필드: `summary`(제목), `description`(메모), `start`/`end`(시간이면 `dateTime`+`timeZone`, 종일이면 `date`).
-- 읽어 온 이벤트는 화면용 객체로만 존재한다(`id:'g:<구글 id>'`, 여러 날에 걸친 시간 이벤트는 날짜별 조각 `'g:<id>:<날짜>'`, `google:true`, `gid`, `raw`, `allDay`, `recurring`, `link`, `note`=description, `seg`). `localStorage` 에는 쓰지 않는다.
+- 읽어 온 이벤트는 화면용 객체로만 존재한다(`id:'g:<구글 id>'`, 여러 날에 걸친 시간 이벤트는 날짜별 조각 `'g:<id>:<날짜>'`, `google:true`, `gid`, `raw`, `allDay`, `recurring`, `link`, `note`=description, `seg`, `cal`=속한 캘린더). `localStorage` 에는 쓰지 않는다.
 
 ## 3. 구글 연동 상태
 
 - **방식**: 서버 없이 브라우저에서 Google Identity Services 토큰 클라이언트 + Calendar API v3 를 직접 호출. GIS 스크립트(`accounts.google.com/gsi/client`)는 연결을 시도할 때만 로드. 클라이언트 ID 는 `config.js` 의 `GOOGLE_CLIENT_ID`(저장소에 커밋됨, 공개값).
-- **스코프**: `https://www.googleapis.com/auth/calendar.events` 하나. 토큰 응답의 `scope` 에 이것(또는 전체 권한 `…/auth/calendar`)이 없으면 토큰을 버리고 미연결로 둔다.
-- **호출하는 API** (전부 `calendars/primary/events` 아래):
+- **스코프**: 요청은 `calendar.events`(필수) + `calendar.calendarlist.readonly`(선택, 읽을 캘린더 목록용). 토큰에 `calendar.events`(또는 전체 권한 `calendar`)가 없으면 토큰을 버리고 미연결. 목록 스코프(또는 `calendar`/`calendar.readonly`)가 없으면 연결은 유지하되 primary 만 읽고 구글 탭에 "다시 연결 (권한 허용)"(`prompt:'consent'`).
+- **호출하는 API**:
 
 | 용도 | 호출 |
 |---|---|
-| 계정 이메일 | `GET …/events?maxResults=1&fields=summary` (primary 캘린더의 `summary` = 이메일) |
-| 이벤트 읽기 | `GET …/events?timeMin&timeMax&singleEvents=true&orderBy=startTime&maxResults=2500` (+`pageToken` 반복) |
-| 추가 / 수정 / 삭제 | `POST …/events` / `PATCH …/events/{id}` / `DELETE …/events/{id}` |
+| 계정 이메일 | `GET calendars/primary/events?maxResults=1&fields=summary` (primary 캘린더의 `summary` = 이메일) |
+| 읽을 캘린더 목록 | `GET users/me/calendarList?fields=items(id,summary,summaryOverride,backgroundColor,accessRole,primary)` (목록 스코프 있을 때만, 403 이어도 연결 유지) |
+| 이벤트 읽기 | 읽을 캘린더마다 병렬 `GET calendars/{id}/events?timeMin&timeMax&singleEvents=true&orderBy=startTime&maxResults=2500` (+`pageToken` 반복) |
+| 추가 | `POST calendars/primary/events` |
+| 수정 / 삭제 | `PATCH` / `DELETE calendars/{이벤트가 속한 캘린더 id}/events/{id}` |
 
-- **읽기 범위**: 표시 중인 달 ±1개월(`[전달 1일, 다다음달 1일)`), primary 캘린더만. 같은 달이면 캐시, 달이 바뀌면 재조회. `cancelled` 는 버림. 종일 이벤트의 `end.date` 는 exclusive 라 하루 뺌. 여러 날에 걸친 시간 이벤트는 날짜별 조각으로 표시(최대 62일).
-- **쓰기 범위**: 제목·메모·시작·끝만(블록 드래그는 `start`/`end` 만 PATCH). 종일 이벤트는 폼에 00:00~23:59 로 보이고 그대로 저장하면 종일 유지. 반복 일정은 `singleEvents` 인스턴스 id 로 PATCH/DELETE 하므로 "이 일정만" 바뀐다. 실패하면 토스트에 "상태코드 메시지" 를 보이고 로컬 상태는 바꾸지 않는다.
+- **읽기 범위**: 표시 중인 달 ±1개월(`[전달 1일, 다다음달 1일)`), 기본 캘린더 + 체크한 캘린더. 캐시는 캘린더별이라 체크 해제·재체크는 조회 없이 조립만 하고, 달이 바뀌거나 새로 체크한 캘린더만 조회. 쓰기 뒤에는 그 캘린더만 재조회. `cancelled` 는 버림. 종일 이벤트의 `end.date` 는 exclusive 라 하루 뺌. 여러 날에 걸친 시간 이벤트는 날짜별 조각으로 표시(최대 62일).
+- **쓰기 범위**: 제목·메모·시작·끝만(블록 드래그는 `start`/`end` 만 PATCH). 읽기 권한뿐인 공유 캘린더(accessRole reader/freeBusyReader)의 일정은 폼에 안내 + 저장·삭제 비활성, 드래그 불가. 종일 이벤트는 폼에 00:00~23:59 로 보이고 그대로 저장하면 종일 유지. 반복 일정은 `singleEvents` 인스턴스 id 로 PATCH/DELETE 하므로 "이 일정만" 바뀐다. 실패하면 토스트에 "상태코드 메시지" 를 보이고 로컬 상태는 바꾸지 않는다.
 - **충돌 검사**: 시간 있는 구글 이벤트는 로컬 약속과 같은 규칙으로 활성 루틴과 검사. 종일 이벤트는 검사하지 않음.
 - **상태** `G.status`: `off` / `connecting` / `on` / `expired`. API 401 또는 `expires_in` 경과 → `expired`, 이벤트 비움, 탭에 "다시 연결".
 - **재연결**:
@@ -138,7 +141,7 @@
   - `file://` 로 열면 OAuth 팝업이 동작하지 않는다(README). 승인된 JavaScript 원본에 배포 주소와 `http://localhost:8000` 등록 필요.
   - `<input type="time">` 이 24:00 을 표시하지 못해 자정에 끝나는 이벤트는 다음날 00:00 으로, 드래그 생성 끝 시간은 23:59 까지.
   - 미연결 상태에서 만든 로컬 약속은 연결 후 배지 없이 편집·삭제만 되고, 구글 탭의 "옮기기" 로 날짜마다 이벤트 하나씩 만들어 옮긴다(성공한 것만 로컬에서 삭제).
-  - 범위 밖(CLAUDE.md): 루틴 업로드, 다른 캘린더 선택, 참석자·알림·장소, 반복 규칙 편집.
+  - 범위 밖(CLAUDE.md): 루틴 업로드, 캘린더별 색, 캘린더 간 이동, 참석자·알림·장소, 반복 규칙 편집.
   - 커밋 `07eb7f4`(연결 시 403 수정)는 GIS·fetch 를 스텁한 헤드리스 Chrome 으로 검증했고, 실제 구글 계정으로의 연결은 이 커밋 이후 저장소에 기록된 확인이 없다.
 
 ## 4. 구조
@@ -156,7 +159,7 @@
 | `docs/design-review.md` | 104 | iOS/macOS 참고 이미지 대비 룩·모션 비교표와 검증 메모 |
 | `docs/ref/` | 7개 PNG | 참고 이미지(iOS 4, macOS 3) |
 | `docs/shots/` | 47개(GIF 10, PNG 37) | 앱 스크린샷·비교 그림·모션 프레임 |
-| `tests/` | `run.py`, `lib.js`, `t-*.html` 5개, `README.md` | 헤드리스 Chrome 회귀 하네스 (6절) |
+| `tests/` | `run.py`, `lib.js`, `t-*.html` 6개, `README.md` | 헤드리스 Chrome 회귀 하네스 (6절) |
 
 - 의존성: 런타임 외부 의존성 없음(프레임워크·번들러·빌드·npm·CDN·외부 폰트 없음). 구글 연동 시에만 `accounts.google.com/gsi/client` 와 `www.googleapis.com/calendar/v3` 에 접근.
 - 상태 변경은 `save()` 후 `render()` 로 `#app` 전체를 다시 그린다(부분 갱신·가상 DOM 없음). 모달·시트·팝오버·토스트는 `body` 에 붙어 렌더에 지워지지 않는다.
@@ -167,7 +170,7 @@
 
 - 코드 안 `TODO`/`FIXME` 주석: 없음.
 - 저장소 문서에 기록된 알려진 버그: 없음. 최근 고친 버그: 연결 시 403(`07eb7f4`); 종료일이 시작일보다 앞선 약속(폼은 막지만 백업 파일·저장값으로는 들어올 수 있음)을 그릴 때 `eventSegs`/`indexEvents`/`migrateLocalEvents` 가 시작·끝에 같은 Date 객체를 써서 무한 루프에 빠지던 것(하네스 복원 때 `t-conflicts.html` 이 발견).
-- 범위 밖으로 명시된 것(CLAUDE.md, docs/design-review.md): 다중 사용자·동기화·인증·모바일 최적화, 모바일 레이아웃, 햅틱·제스처 내비게이션, 아이콘 세트, 팝오버 드래그 이동, 일간 뷰의 미니 달력, 루틴 업로드, 다른 캘린더 선택, 참석자·알림·장소, 반복 규칙 편집.
+- 범위 밖으로 명시된 것(CLAUDE.md, docs/design-review.md): 다중 사용자·동기화·인증·모바일 최적화, 모바일 레이아웃, 햅틱·제스처 내비게이션, 아이콘 세트, 팝오버 드래그 이동, 일간 뷰의 미니 달력, 루틴 업로드, 캘린더별 색, 캘린더 간 이동, 참석자·알림·장소, 반복 규칙 편집.
 - 구현되지 않은 것(코드 기준): 월간 뷰의 약속 드래그, 반복 이벤트 전체 시리즈 이동, 서비스 워커(오프라인), 데이터 마이그레이션, 구글 이벤트의 백업 포함.
 - `docs/design-review.md` 의 "검증 메모" 에 적힌 룩·모션 회귀 하네스(25종)와 상단바 배치 검사(34건)는 저장소에 없다. 그중 팝오버 배치만 `tests/t-popover.html` 로 다시 만들었다.
 
@@ -183,6 +186,7 @@
 | `t-backup.html` | `validateBackup` 통과(알 수 없는 필드 제거, `note` 처리, 24:00 허용, settings 복사)·거부(version, 구조, id 중복, day·시간·날짜 형식, settings 범위)·정규화(theme 미지원 값 버림, color 순환, active/name 타입), `mergeBackup` 집계와 상태, 설정 모달 백업 탭에서 파일 선택 → 미리보기 → 합치기, 깨진 JSON 거부 |
 | `t-google-scope.html` (변형 A·B·C·D) | GIS·fetch 스텁: A 정상 토큰 → 연결·이메일·events.list·POST/PATCH/DELETE 403 없음, B `calendar.events` 없는 토큰 → 미연결 + "다시 연결 (권한 허용)" + `prompt:'consent'` → 연결, C API 403 scope 부족 → 같은 처리, D 로드 시 `prompt:'none'`+`hint` 조용한 재연결 |
 | `t-event-drag.html` (변형 local · google) | 주간·일간 약속 블록 드래그: 클릭 vs 이동 판별(5px), 같은 날 이동, 다른 날 열로 이동, 드래그 중 겹침 테두리, 상·하단 리사이즈와 최소 30분, 여러 날 로컬 약속의 범위 이동, 자정 넘김 조각·종일은 클릭만, 제자리 드롭·pointercancel 원위치, 일간 뷰는 날짜 고정, 구글은 `start`/`end` 만 PATCH + 캐시 갱신(재조회 없음) + 실패 시 원위치·토스트 |
+| `t-calendars.html` (변형 list · nolist) | 읽을 캘린더: calendarList 조회와 체크박스(기본 고정·읽기 전용 표시·색), primary 만 읽다가 체크하면 그 캘린더만 조회, 월·주·일 표시와 겹침 검사, 툴팁의 캘린더 이름, 해제·재체크는 조회 없음(캘린더별 캐시), 수정·삭제는 그 캘린더 URL + 그 캘린더만 재조회, 추가는 primary, 읽기 전용 캘린더는 저장·삭제 비활성·드래그 불가, 새로고침, 해제 시 선택 삭제; 목록 스코프 없는 토큰이면 primary 별칭으로 읽고 "다시 연결 (권한 허용)" → `prompt:'consent'` → 목록 로드 |
 | `t-popover.html` (변형 wide 1400×900 · narrow 600×800) | 팝오버 자리: 주간 블록 오른쪽 / 오른쪽 끝 블록은 왼쪽 / 아래가 부족하면 위로 / 월간 칸 클릭 지점 오른쪽·왼쪽 / `+ 약속` 버튼 왼쪽 / 일간 폭 전체 블록은 지점 기준, 폭 360, 투명 오버레이, Esc·바깥 클릭 닫힘, 720px 이하는 하단 시트 |
 
 - 실제 구글 계정·브라우저 팝업을 거치는 연결은 자동화되어 있지 않다.
