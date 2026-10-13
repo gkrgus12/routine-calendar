@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="ko"><head><meta charset="utf-8"><title>충돌 계산</title>
+<link rel="stylesheet" href="../styles.css"></head>
+<body><div class="app" id="app"></div>
+<script src="lib.js"></script>
+<script>
+// 2026-10-12 = 월요일, 2026-10-18 = 일요일
+run(async()=>{
+  const pA={id:'pA',name:'학교',color:0,active:true,colorByLabel:false,items:[
+    {id:'a1',day:0,start:'09:00',end:'10:00',label:'수업'},
+    {id:'a2',day:6,start:'23:00',end:'01:00',label:'야간'},   // 일 23:00 → 월 01:00 (자정 넘김)
+    {id:'a3',day:0,start:'',end:'12:00',label:'빈 시작'}]};   // 시간 없는 아이템은 무시
+  const pB={id:'pB',name:'운동',color:1,active:false,colorByLabel:false,items:[
+    {id:'b1',day:0,start:'09:30',end:'10:30',label:'러닝'},
+    {id:'b2',day:0,start:'10:10',end:'10:20',label:'스트레칭'}]}; // 같은 페이지 안에서 b1 과 겹침, a1 과는 안 겹침
+  const pC={id:'pC',name:'꺼짐',color:2,active:false,colorByLabel:false,items:[{id:'c1',day:0,start:'09:00',end:'10:00',label:''}]};
+  seed({pages:[pA,pB,pC],events:[{id:'e1',title:'치과',startDate:'2026-10-12',endDate:'2026-10-12',startTime:'09:30',endTime:'10:30'}],settings:{defaultStart:'10:00',defaultDur:60}});
+  await loadApp();
+
+  // overlap: 끝 == 시작 은 겹치지 않는다
+  check('overlap: 끝=시작 은 비겹침',RC.overlap(60,120,120,180)===false);
+  check('overlap: 1분 겹침',RC.overlap(60,120,119,180)===true);
+
+  // itemSegs
+  const J=JSON.stringify;
+  check('itemSegs 보통 한 조각',J(RC.itemSegs({day:2,start:'09:00',end:'10:00'}))===J([{day:2,s:540,e:600,part:'single'}]));
+  check('itemSegs 자정 넘김 일→월 두 조각',J(RC.itemSegs({day:6,start:'23:00',end:'01:00'}))===J([{day:6,s:1380,e:1440,part:'head'},{day:0,s:0,e:60,part:'tail'}]));
+  check('itemSegs end==start 무시',RC.itemSegs({day:0,start:'09:00',end:'09:00'}).length===0);
+  check('itemSegs 빈 시간 무시',RC.itemSegs({day:0,start:'',end:'10:00'}).length===0&&RC.itemSegs({day:0,start:'09:00',end:''}).length===0);
+
+  // eventSegs
+  const segs=x=>RC.eventSegs(x).map(s=>s.date+' '+s.s+'-'+s.e+' '+s.part).join(', ');
+  check('eventSegs 하루',segs({startDate:'2026-10-12',endDate:'2026-10-12',startTime:'09:00',endTime:'10:00'})==='2026-10-12 540-600 single');
+  check('eventSegs 여러 날 같은 시간',segs({startDate:'2026-10-12',endDate:'2026-10-14',startTime:'09:00',endTime:'10:00'})==='2026-10-12 540-600 single, 2026-10-13 540-600 single, 2026-10-14 540-600 single');
+  check('eventSegs 자정 넘김 두 조각',segs({startDate:'2026-10-12',endDate:'2026-10-13',startTime:'23:00',endTime:'01:00'})==='2026-10-12 1380-1440 head, 2026-10-13 0-60 tail');
+  check('eventSegs 종료일<시작일 → 시작일 하루',segs({startDate:'2026-10-12',endDate:'2026-10-01',startTime:'09:00',endTime:'10:00'})==='2026-10-12 540-600 single');
+  check('eventSegs 종일(00:00~24:00) 날짜마다 0~1440',segs({allDay:true,startDate:'2026-10-12',endDate:'2026-10-13',startTime:'00:00',endTime:'24:00'})==='2026-10-12 0-1440 single, 2026-10-13 0-1440 single');
+
+  // eventConflicts: 활성 페이지의 시간 있는 아이템만, 조각 단위
+  const cf=ev=>RC.eventConflicts(ev).map(c=>c.date+':'+c.item.id).sort().join(','); // 순서는 아이템 순(구현 세부)이라 정렬해 비교
+  check('eventConflicts 활성 페이지(pA)만, 비활성 pB·pC 제외',cf({startDate:'2026-10-12',endDate:'2026-10-12',startTime:'09:30',endTime:'10:30'})==='2026-10-12:a1');
+  check('eventConflicts 끝=시작 은 비겹침',cf({startDate:'2026-10-12',endDate:'2026-10-12',startTime:'10:00',endTime:'11:00'})==='');
+  check('eventConflicts 여러 날 → 월요일마다 한 건',cf({startDate:'2026-10-12',endDate:'2026-10-19',startTime:'09:00',endTime:'09:30'})==='2026-10-12:a1,2026-10-19:a1');
+  check('eventConflicts 자정 넘김 루틴의 꼬리(월 00:00~01:00)',cf({startDate:'2026-10-12',endDate:'2026-10-12',startTime:'00:30',endTime:'01:30'})==='2026-10-12:a2');
+  check('eventConflicts 자정 넘김 루틴의 머리(일 23:00~24:00)',cf({startDate:'2026-10-18',endDate:'2026-10-18',startTime:'22:30',endTime:'23:30'})==='2026-10-18:a2');
+  check('eventConflicts 자정 넘김 약속: 머리는 일요일 a2, 꼬리는 월요일 a1·a2',cf({startDate:'2026-10-18',endDate:'2026-10-19',startTime:'23:30',endTime:'09:30'})==='2026-10-18:a2,2026-10-19:a1,2026-10-19:a2',cf({startDate:'2026-10-18',endDate:'2026-10-19',startTime:'23:30',endTime:'09:30'}));
+  check('eventConflicts 종료일<시작일 약속은 시작일 하루만(무한 루프 회귀)',cf({startDate:'2026-10-12',endDate:'2026-10-05',startTime:'09:30',endTime:'10:30'})==='2026-10-12:a1');
+  check('eventConflicts 시간 없는 아이템(a3) 무시',cf({startDate:'2026-10-12',endDate:'2026-10-12',startTime:'11:00',endTime:'12:00'})==='');
+
+  // pageConflicts: 다른 활성 페이지와만, 같은 페이지 안 겹침은 제외
+  const pc=RC.pageConflicts(RC.S.pages[1]);
+  check('pageConflicts pB: a1↔b1 한 쌍(같은 페이지 b1↔b2, 비활성 pC 제외)',pc.length===1&&pc[0].a.id==='b1'&&pc[0].b.id==='a1',pc.map(x=>x.a.id+'↔'+x.b.id));
+  check('pageConflicts pC: a1↔c1 한 쌍',RC.pageConflicts(RC.S.pages[2]).length===1);
+
+  // UI: 페이지 켜기 → 토스트, 양쪽 활성 유지
+  RC.togglePage(RC.S.pages[1]);await sleep(50);
+  check('켤 때 토스트 "겹치는 시간이 1개"',/겹치는 시간이 1개/.test(toastText()),toastText());
+  check('둘 다 활성 유지',RC.S.pages[0].active===true&&RC.S.pages[1].active===true);
+  check('끌 때는 검사하지 않음(토스트 없음)',(()=>{document.querySelectorAll('.toast').forEach(t=>t.remove());RC.togglePage(RC.S.pages[1]);return toastText()===''&&RC.S.pages[1].active===false})());
+  RC.togglePage(RC.S.pages[1]);await sleep(20); // 다시 켜 둔다 (pA+pB 활성)
+
+  // UI: 월간 칩 겹침 점 + 약속 폼 경고 박스 (치과 09:30~10:30 vs a1·b1·b2 = 3건)
+  RC.view.type='month';RC.view.ym='2026-10';RC.render();await sleep(30);
+  const chip=[...document.querySelectorAll('.mgrid .ev')].find(e=>e.textContent.includes('치과'));
+  check('월간 칩 겹침 점(.cf)',!!chip&&!!chip.querySelector('.cf'));
+  chip.dispatchEvent(new MouseEvent('click',{bubbles:true,clientX:400,clientY:300}));await sleep(30);
+  check('약속 폼 경고 박스 "활성 루틴과 3건 겹쳐요"',/활성 루틴과 3건 겹쳐요/.test(text('.md .cfbox')),text('.md .cfbox'));
+  check('경고 목록 3줄',document.querySelectorAll('.md .cfbox li').length===3);
+});
+</script>
+</body></html>

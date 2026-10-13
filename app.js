@@ -15,7 +15,6 @@ const ymd=d=>d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate());
 const parse=s=>{const [y,m,d]=s.split('-').map(Number);return new Date(y,m-1,d)};
 const wd=d=>(d.getDay()+6)%7; // 0=Mon
 const overlap=(a1,a2,b1,b2)=>a1<b2&&b1<a2;
-const esc=s=>String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 // 라벨 정규화(trim + 연속 공백 1개) 와 결정적 해시 (FNV-1a). 라벨별 색과 형제 블록 판정에 씀
 const labelKey=s=>(s||'').trim().replace(/\s+/g,' ');
 const hashStr=s=>{let h=2166136261;for(let i=0;i<s.length;i++){h^=s.charCodeAt(i);h=Math.imul(h,16777619)}return h>>>0};
@@ -310,7 +309,7 @@ async function migrateLocalEvents(){
   let moved=0,failed=null;
   for(const ev of [...S.events]){
     try{
-      let d=parse(ev.startDate),e=parse(ev.endDate);if(e<d)e=d;
+      let d=parse(ev.startDate),e=parse(ev.endDate);if(e<d)e=new Date(d);
       for(;d<=e;d.setDate(d.getDate()+1)){const k=ymd(d);await gapiCall('POST',EV_BASE,toGoogleBody({title:ev.title,note:ev.note,startDate:k,endDate:k,startTime:ev.startTime,endTime:ev.endTime}))}
       S.events=S.events.filter(x=>x.id!==ev.id);save();moved++;
     }catch(e){failed=e&&e.message?e.message:String(e);break}
@@ -337,7 +336,7 @@ function itemSegs(it){
 // 약속의 날짜별 조각(분). 종료일이 시작일 다음 날이고 끝 시간이 시작보다 이르면 자정을 넘긴 하나의 일정(두 조각).
 // 그 외 여러 날 범위는 날짜마다 같은 시간(기존 로컬 모델). 종일은 날짜마다 0~1440
 function eventSegs(ev){
-  const out=[];let d=parse(ev.startDate),end=parse(ev.endDate);if(end<d)end=d;
+  const out=[];let d=parse(ev.startDate),end=parse(ev.endDate);if(end<d)end=new Date(d); // 같은 객체를 가리키면 아래 루프가 끝나지 않는다
   const s=toMin(ev.startTime),e=toMin(ev.endTime);
   const next=new Date(d);next.setDate(next.getDate()+1);
   if(!ev.allDay&&ymd(end)===ymd(next)&&e<s){out.push({date:ymd(d),s,e:1440,part:'head'});out.push({date:ymd(end),s:0,e,part:'tail'});return out}
@@ -598,7 +597,7 @@ function indexEvents(){ // 로컬 약속 + (연결돼 있으면) 구글 이벤�
       push(segs[1].date,{...ev,startDate:segs[1].date,endDate:segs[1].date,startTime:'00:00',seg:'tail',src:ev});
     }else for(const sg of segs)push(sg.date,ev);
   }
-  if(G.status==='on')for(const ev of G.events){let d=parse(ev.startDate),e=parse(ev.endDate);if(e<d)e=d;for(;d<=e;d.setDate(d.getDate()+1))push(ymd(d),ev)}
+  if(G.status==='on')for(const ev of G.events){let d=parse(ev.startDate),e=parse(ev.endDate);if(e<d)e=new Date(d);for(;d<=e;d.setDate(d.getDate()+1))push(ymd(d),ev)}
   for(const k in idx)idx[k].sort((a,b)=>(b.allDay?1:0)-(a.allDay?1:0)||a.startTime.localeCompare(b.startTime));
   return idx;
 }
@@ -757,7 +756,7 @@ function renderPage(main){
   const sw=h('div',{class:'swatches'});
   PCOL.forEach((c,i)=>sw.appendChild(h('button',{class:i===p.color?'sel':'',style:'background:'+c,title:'색',onclick:()=>{p.color=i;save();render()}})));
   ed.appendChild(h('div',{class:'row'},[
-    h('input',{type:'text',value:p.name,placeholder:'페이지 이름 (예: 학교 시간표, 운동)',oninput:(e)=>{p.name=e.target.value;save();document.querySelectorAll('.side .nav li .nm').forEach(()=>{});},onchange:()=>render()}),
+    h('input',{type:'text',value:p.name,placeholder:'페이지 이름 (예: 학교 시간표, 운동)',oninput:(e)=>{p.name=e.target.value;save()},onchange:()=>render()}),
     sw
   ]));
   // 같은 이름끼리 같은 색 (page.colorByLabel)

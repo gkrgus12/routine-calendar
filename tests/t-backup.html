@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="ko"><head><meta charset="utf-8"><title>백업 가져오기 검증</title>
+<link rel="stylesheet" href="../styles.css"></head>
+<body><div class="app" id="app"></div>
+<script src="lib.js"></script>
+<script>
+run(async()=>{
+  seed({pages:[{id:'P1',name:'기존',color:0,active:true,colorByLabel:false,items:[{id:'I1',day:0,start:'09:00',end:'10:00',label:'x'}]}],
+    events:[{id:'E1',title:'기존 약속',startDate:'2026-10-12',endDate:'2026-10-12',startTime:'10:00',endTime:'11:00'}],
+    settings:{defaultStart:'10:00',defaultDur:60,theme:'dark'}});
+  await loadApp();
+  const V_=o=>RC.validateBackup(o);
+  const base=()=>({version:1,exportedAt:'2026-10-13T00:00:00.000Z',
+    pages:[{id:'p1',name:'페이지',color:1,active:true,colorByLabel:true,extra:'x',items:[
+      {id:'i1',day:0,start:'09:00',end:'10:00',label:'수업',junk:1},
+      {id:'i2',day:6,start:'',end:null}]}],
+    events:[{id:'e1',title:'약속',startDate:'2026-10-12',endDate:'2026-10-12',startTime:'09:00',endTime:'10:00',note:'메모',junk:true},
+            {id:'e2',title:'노트없음',startDate:'2026-10-13',endDate:'2026-10-13',startTime:'09:00',endTime:'24:00',note:5}],
+    settings:{defaultStart:'08:00',defaultDur:30,theme:'light',weekStart:'sun',dayStart:7,dayEnd:22,googleKeepLogin:false,routineAlpha:40,eventColor:3,hourHeight:48,unknown:1}});
+
+  // 통과하는 파일: 알려진 필드만 복사
+  let r=V_(base());
+  check('정상 파일 통과',!r.error,r.error);
+  if(!r.error){const d=r.data;
+    check('알 수 없는 필드 제거(page.extra, item.junk, event.junk, settings.unknown)',!('extra' in d.pages[0])&&!('junk' in d.pages[0].items[0])&&!('junk' in d.events[0])&&!('unknown' in d.settings));
+    check('item 빈 start / null end → "", label 없음 → ""',d.pages[0].items[1].start===''&&d.pages[0].items[1].end===''&&d.pages[0].items[1].label==='');
+    check('note 문자열은 복사, 숫자는 버림(키 없음)',d.events[0].note==='메모'&&!('note' in d.events[1]));
+    check('시간 24:00 허용',d.events[1].endTime==='24:00');
+    check('settings 전부 복사(키 순서 포함)',JSON.stringify(d.settings)===JSON.stringify({defaultStart:'08:00',defaultDur:30,theme:'light',weekStart:'sun',googleKeepLogin:false,routineAlpha:40,eventColor:3,hourHeight:48,dayStart:7,dayEnd:22}),d.settings);
+    check('exportedAt 유지',d.exportedAt==='2026-10-13T00:00:00.000Z');
+  }
+
+  // 거부되는 파일
+  const bad=(name,mut,re)=>{const o=base();mut(o);const r=V_(o);check('거부: '+name,!!r.error&&(!re||re.test(r.error)),r.error||'통과됨')};
+  check('거부: 최상위 배열',!!V_([]).error);
+  check('거부: null',!!V_(null).error);
+  bad('version 없음',o=>{delete o.version},/버전/);
+  bad('version 2',o=>{o.version=2},/버전/);
+  bad('events 없음',o=>{delete o.events},/pages·events·settings/);
+  bad('settings 가 객체가 아님',o=>{o.settings='x'},/pages·events·settings/);
+  bad('pages 가 배열이 아님',o=>{o.pages={}},/pages·events·settings/);
+  bad('페이지 id 없음',o=>{delete o.pages[0].id},/id/);
+  bad('items 가 배열이 아님',o=>{o.pages[0].items={}},/items/);
+  bad('페이지 id 중복',o=>{o.pages.push({...o.pages[0],items:[]})},/페이지 id 중복/);
+  bad('루틴 id 중복(같은 페이지)',o=>{o.pages[0].items.push({id:'i1',day:1,start:'09:00',end:'10:00'})},/루틴 id 중복/);
+  bad('약속 id 중복',o=>{o.events.push({...o.events[0]})},/약속 id 중복/);
+  bad('day 7',o=>{o.pages[0].items[0].day=7},/day/);
+  bad('day 문자열',o=>{o.pages[0].items[0].day='0'},/day/);
+  bad('시간 25:00',o=>{o.pages[0].items[0].start='25:00'},/HH:MM/);
+  bad('시간 09:60',o=>{o.pages[0].items[0].end='09:60'},/HH:MM/);
+  bad('약속 날짜 2026-02-30',o=>{o.events[0].startDate='2026-02-30'},/날짜/);
+  bad('약속 시간 9:00',o=>{o.events[0].startTime='9:00'},/날짜/);
+  bad('약속 id 없음',o=>{o.events[0].id=''},/id/);
+  bad('defaultDur 4',o=>{o.settings.defaultDur=4},/defaultDur/);
+  bad('defaultStart 형식',o=>{o.settings.defaultStart='10시'},/defaultStart/);
+  bad('weekStart tue',o=>{o.settings.weekStart='tue'},/weekStart/);
+  bad('googleKeepLogin 문자열',o=>{o.settings.googleKeepLogin='yes'},/googleKeepLogin/);
+  bad('routineAlpha 4',o=>{o.settings.routineAlpha=4},/routineAlpha/);
+  bad('routineAlpha 소수',o=>{o.settings.routineAlpha=22.5},/routineAlpha/);
+  bad('eventColor 6',o=>{o.settings.eventColor=6},/eventColor/);
+  bad('hourHeight 23',o=>{o.settings.hourHeight=23},/hourHeight/);
+  bad('hourHeight 문자열 fixed',o=>{o.settings.hourHeight='fixed'},/hourHeight/);
+  bad('dayStart >= dayEnd',o=>{o.settings.dayStart=10;o.settings.dayEnd=10},/dayStart/);
+  bad('dayEnd 25',o=>{o.settings.dayEnd=25},/dayStart/);
+  bad('dayEnd 만 있고 기본 dayStart(6) 보다 작음',o=>{delete o.settings.dayStart;o.settings.dayEnd=5},/dayStart/);
+
+  // 에러 없이 정규화되는 값
+  let o=base();o.settings.theme='blue';o.pages[0].color=7;o.pages[0].active='yes';o.pages[0].name=5;o.pages[0].colorByLabel=1;r=V_(o);
+  check('theme 미지원 값은 버림(에러 아님)',!r.error&&!('theme' in r.data.settings),r.error);
+  check('color 7 → 1 (6색 순환)',!r.error&&r.data.pages[0].color===1);
+  check('active/colorByLabel 비불리언 → false, name 비문자열 → ""',!r.error&&r.data.pages[0].active===false&&r.data.pages[0].colorByLabel===false&&r.data.pages[0].name==='');
+  o=base();o.pages[0].color=-1;r=V_(o);check('color -1 → 5',!r.error&&r.data.pages[0].color===5);
+  o=base();o.pages[0].color='x';r=V_(o);check('color 비정수 → 0',!r.error&&r.data.pages[0].color===0);
+  o=base();o.settings.hourHeight='fit';r=V_(o);check("hourHeight 'fit' 통과",!r.error&&r.data.settings.hourHeight==='fit');
+  o=base();delete o.settings.dayEnd;o.settings.dayStart=23;r=V_(o);check('dayStart 23 + dayEnd 기본 24 통과(dayEnd 는 복사 안 함)',!r.error&&r.data.settings.dayStart===23&&!('dayEnd' in r.data.settings));
+  o=base();delete o.exportedAt;r=V_(o);check('exportedAt 없으면 null',!r.error&&r.data.exportedAt===null);
+
+  // mergeBackup: id 기준 중복 제거, 설정 유지
+  const inc={pages:[
+      {id:'P1',name:'다른이름',color:3,active:false,colorByLabel:false,items:[{id:'I1',day:3,start:'01:00',end:'02:00',label:'dup'},{id:'I2',day:1,start:'09:00',end:'10:00',label:'새'}]},
+      {id:'P2',name:'새 페이지',color:2,active:true,colorByLabel:false,items:[{id:'J1',day:0,start:'09:00',end:'10:00',label:''},{id:'J2',day:1,start:'09:00',end:'10:00',label:''}]}],
+    events:[{id:'E1',title:'dup',startDate:'2026-01-01',endDate:'2026-01-01',startTime:'01:00',endTime:'02:00'},
+            {id:'E2',title:'새 약속',startDate:'2026-10-13',endDate:'2026-10-13',startTime:'10:00',endTime:'11:00'}],
+    settings:{defaultStart:'07:00',defaultDur:15}};
+  const m=RC.mergeBackup(inc);
+  check('merge 집계 {addP:1,addI:3,addE:1,dup:3}',JSON.stringify(m)===JSON.stringify({addP:1,addI:3,addE:1,dup:3}),m);
+  const S=RC.S;
+  check('merge: 같은 id 페이지는 기존 것 유지(이름·I1 그대로) + 새 루틴 I2 만 추가',S.pages[0].name==='기존'&&S.pages[0].items.length===2&&S.pages[0].items[0].day===0&&S.pages[0].items[1].id==='I2');
+  check('merge: 새 id 페이지 추가',S.pages.length===2&&S.pages[1].id==='P2'&&S.pages[1].items.length===2);
+  check('merge: 같은 id 약속 유지 + 새 약속 추가',S.events.length===2&&S.events[0].title==='기존 약속'&&S.events[1].id==='E2');
+  check('merge: 설정 유지',S.settings.defaultStart==='10:00'&&S.settings.theme==='dark');
+
+  // UI: 설정 > 백업 탭 — 파일 선택 → 미리보기 → 합치기
+  btn('⚙ 설정').click();await sleep(50);btn('백업').click();await sleep(50);
+  let input=document.querySelector('.md.settings input[type=file]');
+  check('백업 탭에 파일 입력',!!input);
+  const f=base();f.pages[0].id='p9';f.pages[0].items[0].id='i9';f.pages[0].items[1].id='i10';f.events[0].id='e9';f.events[1].id='e10';
+  let dt=new DataTransfer();dt.items.add(new File([JSON.stringify(f)],'b.json',{type:'application/json'}));input.files=dt.files;
+  input.dispatchEvent(new Event('change',{bubbles:true}));
+  await waitFor(()=>/페이지 1개 \(루틴 2개\) · 약속 2개/.test(text('.md.settings')));
+  check('미리보기에 "페이지 1개 (루틴 2개) · 약속 2개"',/페이지 1개 \(루틴 2개\) · 약속 2개/.test(text('.md.settings')),text('.md.settings').slice(0,300));
+  check('덮어쓰기·합치기 버튼 활성',!!btn('합치기')&&!btn('합치기').disabled&&!btn('덮어쓰기').disabled);
+  btn('합치기').click();await sleep(50);
+  check('합치기 토스트',/합쳤어요: 페이지 1개, 루틴 2개, 약속 2개 추가 · 중복 0개/.test(toastText()),toastText());
+  check('합친 뒤 상태(페이지 3, 약속 4)',RC.S.pages.length===3&&RC.S.events.length===4);
+  check('합친 뒤 모달 닫힘',!document.querySelector('.md.settings'));
+
+  // UI: 깨진 JSON → 토스트, 상태 그대로
+  btn('⚙ 설정').click();await sleep(50);btn('백업').click();await sleep(50);
+  input=document.querySelector('.md.settings input[type=file]');
+  dt=new DataTransfer();dt.items.add(new File(['{broken'],'x.json'));input.files=dt.files;input.dispatchEvent(new Event('change',{bubbles:true}));
+  await waitFor(()=>/가져오기 실패/.test(toastText()));
+  check('깨진 JSON 토스트',/가져오기 실패: JSON 파일이 아니거나/.test(toastText()),toastText());
+  check('버튼 비활성 유지',btn('합치기').disabled===true);
+  // UI: 검증 실패 파일(version 2) → 토스트에 이유
+  dt=new DataTransfer();dt.items.add(new File([JSON.stringify(Object.assign(base(),{version:2}))],'v2.json'));input.files=dt.files;input.dispatchEvent(new Event('change',{bubbles:true}));
+  await waitFor(()=>/지원하지 않는 버전/.test(toastText()));
+  check('version 2 파일 토스트에 이유',/가져오기 실패: 지원하지 않는 버전/.test(toastText()),toastText());
+  check('상태 그대로',RC.S.pages.length===3&&RC.S.events.length===4);
+});
+</script>
+</body></html>

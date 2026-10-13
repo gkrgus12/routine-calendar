@@ -16,7 +16,7 @@
 
 - 그냥 `index.html`을 브라우저로 열면 된다 (`file://` 로도 동작)
 - 로컬 서버가 필요하면 `python -m http.server 8000` 후 `http://localhost:8000/`
-- 테스트·린트·빌드 단계 없음. 수정 후 새로고침으로 확인
+- 린트·빌드 단계 없음. 수정 후 새로고침으로 확인하고, 브리프를 끝낼 때 `python tests/run.py`(헤드리스 Chrome) 전체 실행이 통과해야 한다 ("작업 시 주의" 의 하네스 규칙)
 
 ## 범위
 
@@ -118,7 +118,7 @@
   - 블록 드래그: 잡으면 `scale(1.02)` + `.dragging` 그림자, 놓으면 재렌더 뒤 `pendingSettle` 로 그 블록을 1.02→1 스프링 안착(`settleBlock`)
   - 토글·세그먼트: `.sw .knob`(실제 요소)와 `.seg .pill`(선택 배경)이 이전 위치에서 미끄러진다(`pendingKnob`, `segPrev` → `animateKnob`/`layoutSegs`, render 끝에 호출)
 - 비교표와 스크린샷은 `docs/design-review.md`, `docs/shots/`
-- 헤드리스 검증: 가상 시간에서는 애니메이션이 진행되지 않으므로 동작 검사는 Chrome `--force-prefers-reduced-motion` 으로 돌리고, 프레임 캡처는 `document.getAnimations()` 를 원하는 시각으로 pause 해서 찍는다
+- 헤드리스 검증: 가상 시간에서는 애니메이션이 진행되지 않으므로 동작 검사는 Chrome `--force-prefers-reduced-motion` 으로 돌리고(`tests/run.py` 가 이 플래그로 돌린다), 프레임 캡처는 `document.getAnimations()` 를 원하는 시각으로 pause 해서 찍는다
 
 ## 그리드 레이아웃 (편집·주간·일간·월간)
 
@@ -145,7 +145,7 @@
 - 상태 `G.status`: `off` | `connecting` | `on` | `expired`. API 가 401 을 주거나 `expires_in` 이 지나면 `expired` 로 바꾸고 이벤트를 비운 뒤 탭에 "다시 연결" 을 보여준다
 - 계정 이메일은 `fetchGoogleEmail()`: `events.list?maxResults=1&fields=summary` 응답의 `summary`(primary 캘린더 제목 = 계정 이메일, `@` 가 없으면 빈 문자열). `calendars.get` 은 `calendar.events` 스코프로 403 이라 쓰지 않는다
 - 조회 범위: 표시 중인 달(월간은 `view.ym`, 주간은 주 시작일의 달) ±1개월 = `[전달 1일, 다다음달 1일)`. `ensureGoogleEvents(ym)` 이 같은 달이면 캐시를 쓰고 달이 바뀌면 다시 조회하며, 끝나면 `render()`
-- `toLocalEvent()` 가 구글 이벤트를 로컬 약속 모양으로 바꾼다(`id:'g:…'`, `google:true`, `allDay`, `note`=description). 종일은 `end.date` exclusive 라 하루 뺀다. 자정을 넘는 시간 이벤트는 시작한 날 24:00 까지로 자른다. `cancelled` 는 버린다
+- `toLocalEvents()` 가 구글 이벤트 하나를 화면용 조각 배열로 바꾼다(`id:'g:<id>'`, `gid`, `raw`, `google:true`, `allDay`, `recurring`, `link`, `note`=description). 종일은 `end.date` exclusive 라 하루 뺀 범위 한 조각. 여러 날에 걸친 시간 이벤트는 날짜별 조각(`id:'g:<id>:<날짜>'`, 첫날 start~24:00 `seg:'head'`, 중간 00:00~24:00 `'mid'`, 마지막 00:00~end `'tail'`, 최대 62일)으로 나누고 편집은 `raw` 의 실제 시작·끝으로 한다. `cancelled` 는 버린다
 - **약속 저장소**: 연결돼 있으면 약속 추가·수정·삭제 폼(`openEvent`)이 primary 캘린더에 직접 `POST` / `PATCH` / `DELETE` 한다(`gapiCall`, `toGoogleBody`). 성공하면 `G.anchor=null` 로 해당 월을 다시 조회. 실패하면 토스트에 "상태코드 메시지" 를 보여주고 로컬 상태는 바꾸지 않는다. 401 은 만료 처리(재연결 유도), 403 중 scope 부족은 `googleNeedConsent()`(미연결 + 재동의 안내), 그 외 403(캘린더 ACL·할당량 등)은 토스트만
   - 폼의 메모는 `description` 과 왕복: `draftFromGoogle` 이 description 을 메모로 채우고, `toGoogleBody` 는 항상 `description: note||''` 를 보낸다(비우면 구글 쪽 설명도 지워짐, HTML 설명은 원문 그대로 보임). 다른 기기에서 고친 설명은 달을 옮기는 등 재조회 때 반영된다. 로컬 → 구글 옮기기도 메모를 함께 보낸다
   - 폼의 시작일~종료일은 구글에서는 연속 구간(시작일+시작시간 ~ 종료일+끝시간)이 된다. 종일 이벤트는 폼에 00:00~23:59 로 보이며 그대로 두고 저장하면 종일로 유지(time 입력은 24:00 을 못 보여줌). 자정에 끝나는 이벤트는 다음날 00:00 으로 표기. 반복 일정은 `singleEvents` 인스턴스 id 로 PATCH/DELETE 하므로 "이 일정만" 바뀐다
@@ -165,7 +165,7 @@
 
 세 섹션으로 나뉜 IIFE 하나. 더 쪼개지 말 것.
 
-1. **상태 · 충돌 로직**: 상수(`KEY`, `DAYS`, `PCOL`), 유틸(`toMin`, `fromMin`, `ymd`, `wd`, `overlap`…), `load`/`save`, `applyTheme`, 설정 기본값(`SETTINGS_DEFAULTS`, `cfg`, `dayOrder`, `weekStartOf`), 백업 검증·합치기(`validateBackup`, `mergeBackup`), 구글 연동(`G`, `googleConnect`/`googleDisconnect`, `ensureGoogleEvents`, `toLocalEvent`), `view` 상태, `activeItems`/`eventConflicts`/`pageConflicts`
+1. **상태 · 충돌 로직**: 상수(`KEY`, `DAYS`, `PCOL`), 유틸(`toMin`, `fromMin`, `ymd`, `wd`, `overlap`…), `load`/`save`, `applyTheme`, 설정 기본값(`SETTINGS_DEFAULTS`, `cfg`, `dayOrder`, `weekStartOf`), 백업 검증·합치기(`validateBackup`, `mergeBackup`), 구글 연동(`G`, `googleConnect`/`googleDisconnect`, `ensureGoogleEvents`, `toLocalEvents`), `view` 상태, `activeItems`/`eventConflicts`/`pageConflicts`
 2. **렌더링**: `render()` 가 `#app` 을 통째로 다시 그린다. `h()` 로 DOM 생성. 사이드바(`캘린더` 항목 하나 + 루틴 페이지 목록 + 하단 고정 ⚙ 설정), 월간, 주간, 일간, 페이지 편집기, 드래그 그리드, 라벨 편집기
    - 캘린더 뷰 전환은 상단바 세그먼트(`calSeg()`: 일간/주간/월간, `setCalView()`). 세 캘린더 뷰의 상단바는 `calBar(title,{prev,next,today},addBtn)` 하나로 그린다. 마지막 뷰는 `routine-cal-view` 키에 기억(`lastCalView()`), 백업과 무관
    - 주간과 일간은 `timeGridBody(dates)` 를 공유한다(7열/1열). 일간(`renderDay`)은 `view.day`(YYYY-MM-DD) 기준으로 ‹ › 하루 이동·오늘·+ 약속. 주간의 오늘 버튼은 이번 주로 간다. 활성 페이지가 없어도 빈 그리드는 항상 그리고 위에 얇은 `.notice` 한 줄만
@@ -182,3 +182,4 @@
 - 기능 추가·디자인 변경보다 현재 동작 유지가 우선. 동작이 바뀌는 수정은 먼저 확인
 - `KEY` 값과 위 데이터 모델의 필드명은 기존 `localStorage` 데이터와 호환되어야 한다
 - 프레임워크·빌드 도구·파일 추가 분할 금지
+- **검증 하네스는 `tests/` 에 저장한다** (`t-<이름>.html` + 공용 `tests/lib.js`, 러너 `tests/run.py`, 목록은 `tests/README.md`). **브리프를 끝낼 때 `python tests/run.py` 전체 실행이 통과해야 한다.** 동작을 바꾸거나 더하면 해당 하네스를 같이 고치고, 새 동작엔 새 하네스를 둔다. 하네스는 `app.js` 원문의 IIFE 를 벗겨 평가해 내부 함수·상태를 `RC.<이름>` 으로 부르므로 프로덕션 코드에 테스트용 훅을 넣지 않는다. 변형(쿼리·창 크기)은 파일 첫 줄 `<!-- variants: s=A s=B@600x800 -->`

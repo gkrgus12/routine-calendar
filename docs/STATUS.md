@@ -1,4 +1,4 @@
-# 루틴 캘린더 — 현재 상태 (2026-10-13, 커밋 `07eb7f4` 기준)
+# 루틴 캘린더 — 현재 상태 (2026-10-13 기준)
 
 코드(`app.js`, `styles.css`, `index.html`, `config.js`, `manifest.json`)와 저장소 문서(`CLAUDE.md`, `README.md`, `docs/design-review.md`)를 읽고 확인한 사실만 적는다. 추측·계획은 넣지 않는다.
 
@@ -155,32 +155,32 @@
 | `docs/design-review.md` | 104 | iOS/macOS 참고 이미지 대비 룩·모션 비교표와 검증 메모 |
 | `docs/ref/` | 7개 PNG | 참고 이미지(iOS 4, macOS 3) |
 | `docs/shots/` | 47개(GIF 10, PNG 37) | 앱 스크린샷·비교 그림·모션 프레임 |
+| `tests/` | `run.py`, `lib.js`, `t-*.html` 4개, `README.md` | 헤드리스 Chrome 회귀 하네스 (6절) |
 
 - 의존성: 런타임 외부 의존성 없음(프레임워크·번들러·빌드·npm·CDN·외부 폰트 없음). 구글 연동 시에만 `accounts.google.com/gsi/client` 와 `www.googleapis.com/calendar/v3` 에 접근.
 - 상태 변경은 `save()` 후 `render()` 로 `#app` 전체를 다시 그린다(부분 갱신·가상 DOM 없음). 모달·시트·팝오버·토스트는 `body` 에 붙어 렌더에 지워지지 않는다.
 - 모션은 Web Animations API(`anim()`, `springEasing()`), 세로 좌표는 CSS 변수 `--px`(시간당 높이).
-- 저장소: 커밋 24개, 브랜치 `main` 하나, `.gitignore`·CI 설정·패키지 파일 없음.
+- 저장소: 브랜치 `main` 하나, `.gitignore`·CI 설정·패키지 파일 없음.
 
 ## 5. 미완 · 보류 · 알려진 버그
 
 - 코드 안 `TODO`/`FIXME` 주석: 없음.
-- 저장소 문서에 기록된 알려진 버그: 없음. 마지막으로 고친 버그는 연결 시 403(`07eb7f4`).
+- 저장소 문서에 기록된 알려진 버그: 없음. 최근 고친 버그: 연결 시 403(`07eb7f4`); 종료일이 시작일보다 앞선 약속(폼은 막지만 백업 파일·저장값으로는 들어올 수 있음)을 그릴 때 `eventSegs`/`indexEvents`/`migrateLocalEvents` 가 시작·끝에 같은 Date 객체를 써서 무한 루프에 빠지던 것(하네스 복원 때 `t-conflicts.html` 이 발견).
 - 범위 밖으로 명시된 것(CLAUDE.md, docs/design-review.md): 다중 사용자·동기화·인증·모바일 최적화, 모바일 레이아웃, 햅틱·제스처 내비게이션, 아이콘 세트, 팝오버 드래그 이동, 일간 뷰의 미니 달력, 루틴 업로드, 다른 캘린더 선택, 참석자·알림·장소, 반복 규칙 편집.
 - 구현되지 않은 것(코드 기준): 약속 블록의 드래그 이동·리사이즈, 서비스 워커(오프라인), 데이터 마이그레이션, 구글 이벤트의 백업 포함.
-- 문서와 코드가 다른 곳: CLAUDE.md 의 "`toLocalEvent()` 가 … 자정을 넘는 시간 이벤트는 시작한 날 24:00 까지로 자른다" 는 현재 코드와 다르다. 코드의 `toLocalEvents()` 는 여러 날에 걸친 시간 이벤트를 날짜별 조각으로 나눈다(같은 문서의 "표시" 항목에는 조각 방식이 맞게 적혀 있다).
-- 쓰지 않는 코드: `esc()` 헬퍼는 정의만 있고 호출이 없다. 페이지 이름 `oninput` 안의 `document.querySelectorAll('.side .nav li .nm').forEach(()=>{})` 는 아무 일도 하지 않는다.
-- `docs/design-review.md` 의 "검증 메모" 에 적힌 회귀 하네스(25종, 29건, 34건)는 저장소에 들어 있지 않다(git 이력 전체에 테스트 파일이 없음).
+- `docs/design-review.md` 의 "검증 메모" 에 적힌 룩·모션 회귀 하네스(25종)와 상단바 배치 검사(34건)는 저장소에 없다. 그중 팝오버 배치만 `tests/t-popover.html` 로 다시 만들었다.
 
 ## 6. 테스트
 
-- 저장소에 테스트 파일·린트·빌드·CI 가 없다. 확인 방법은 "수정 후 새로고침"(CLAUDE.md).
-- 문서에 기록된 검증 방식: 헤드리스 Chrome 을 `--force-prefers-reduced-motion` 으로 돌려 동작을 검사하고, 프레임 캡처는 `document.getAnimations()` 를 원하는 시각에 멈춰 찍는다. 결과물은 `docs/shots/` 와 `docs/design-review.md` 의 표.
-- 저장소 밖에서 돌린 하네스(파일은 커밋되지 않음):
+- 러너: `python tests/run.py` (헤드리스 Chrome 필요, 못 찾으면 환경변수 `CHROME` 에 경로). 임시 로컬 HTTP 서버로 저장소를 서빙하고 `tests/t-*.html` 을 각각 새 프로필의 헤드리스 Chrome 으로 연다(`--force-prefers-reduced-motion`, 가상 시간). 페이지가 남긴 `<pre id="RESULT">` JSON 의 PASS/FAIL 을 모아 출력하고, 실패가 하나라도 있으면 종료 코드 1. 린트·빌드·CI 는 없다.
+- 공용 `tests/lib.js`: `app.js` 원문을 받아 IIFE 래퍼를 벗겨 평가하고 내부 함수·상태를 `RC.<이름>` 으로 노출한다. 프로덕션 코드에 테스트용 훅은 없다.
+- 문서에 기록된 프레임 캡처 방식(`document.getAnimations()` 를 원하는 시각에 멈춰 찍기)의 결과물은 `docs/shots/` 와 `docs/design-review.md`.
 
-| 하네스 | 커버 범위 | 출처 |
-|---|---|---|
-| 룩·모션 회귀 25종 | 뷰 전환, 시트, 세그먼트, 토글, 블록 드래그 등 | `docs/design-review.md` 검증 메모 |
-| 팝오버 배치 29건 → 34건 | 팝오버 위치 8경우, 상단바 화살표·제목·세그먼트 위치(주간 14주·일간 10일·월간 12달), 좁은 폭 시트 | 같은 문서 3차·4차 |
-| 구글 스코프 4시나리오 (2026-10-13) | GIS·fetch 스텁: ① 정상 토큰 → 연결·이메일·events.list·POST/PATCH/DELETE 모두 403 없음 ② `calendar.events` 없는 토큰 → 미연결 + "다시 연결 (권한 허용)" + `prompt:'consent'` 재요청 → 연결 ③ API 403 scope 부족 → 같은 처리 ④ 로드 시 `prompt:'none'`+`hint` 조용한 재연결. 수정 전 코드에서는 같은 하네스가 403 을 재현 | 커밋 `07eb7f4` 작업 중 |
+| 하네스 | 커버 범위 |
+|---|---|
+| `t-conflicts.html` | `overlap`, `itemSegs`(자정 넘김·일→월·`end==start`·빈 시간), `eventSegs`(여러 날·자정 넘김·종일·종료일<시작일), `eventConflicts`(활성 페이지만·끝=시작 비겹침·여러 날·자정 꼬리/머리), `pageConflicts`(같은 페이지·비활성 제외), 페이지 켤 때 토스트와 양쪽 활성 유지, 월간 칩 겹침 점, 약속 폼 경고 박스 |
+| `t-backup.html` | `validateBackup` 통과(알 수 없는 필드 제거, `note` 처리, 24:00 허용, settings 복사)·거부(version, 구조, id 중복, day·시간·날짜 형식, settings 범위)·정규화(theme 미지원 값 버림, color 순환, active/name 타입), `mergeBackup` 집계와 상태, 설정 모달 백업 탭에서 파일 선택 → 미리보기 → 합치기, 깨진 JSON 거부 |
+| `t-google-scope.html` (변형 A·B·C·D) | GIS·fetch 스텁: A 정상 토큰 → 연결·이메일·events.list·POST/PATCH/DELETE 403 없음, B `calendar.events` 없는 토큰 → 미연결 + "다시 연결 (권한 허용)" + `prompt:'consent'` → 연결, C API 403 scope 부족 → 같은 처리, D 로드 시 `prompt:'none'`+`hint` 조용한 재연결 |
+| `t-popover.html` (변형 wide 1400×900 · narrow 600×800) | 팝오버 자리: 주간 블록 오른쪽 / 오른쪽 끝 블록은 왼쪽 / 아래가 부족하면 위로 / 월간 칸 클릭 지점 오른쪽·왼쪽 / `+ 약속` 버튼 왼쪽 / 일간 폭 전체 블록은 지점 기준, 폭 360, 투명 오버레이, Esc·바깥 클릭 닫힘, 720px 이하는 하단 시트 |
 
 - 실제 구글 계정·브라우저 팝업을 거치는 연결은 자동화되어 있지 않다.
