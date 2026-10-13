@@ -121,14 +121,17 @@ function mergeBackup(data){
   return {addP,addI,addE,dup};
 }
 
-/* ---------- google calendar (읽기 전용) ---------- */
+/* ---------- google calendar (약속 저장소) ---------- */
 // 서버 없이 브라우저에서 Google Identity Services(토큰 클라이언트) + Calendar API v3 를 직접 호출한다.
 // 토큰은 G.token(메모리)에만 두고 절대 localStorage 에 쓰지 않는다 → 새로고침하면 다시 연결해야 한다.
-const GOOGLE_SCOPE='https://www.googleapis.com/auth/calendar.events'; // 약속을 구글 캘린더(primary)에 직접 쓰기 위해 events 스코프. 기존 readonly 동의 사용자는 재동의 필요
+// 스코프는 calendar.events 하나. 이 스코프로 허용되는 호출은 events.list/insert/patch/delete 뿐이다(calendars.get·calendarList 는 403
+// "insufficient authentication scopes") → 이 파일의 구글 호출은 전부 EV_BASE(primary 의 events) 아래로만 간다
+const GOOGLE_SCOPE='https://www.googleapis.com/auth/calendar.events';
+const GOOGLE_SCOPE_FULL='https://www.googleapis.com/auth/calendar'; // 전체 권한은 events 를 포함하므로 토큰에 이게 있어도 충분
 const EV_BASE='https://www.googleapis.com/calendar/v3/calendars/primary/events';
 const gEventUrl=id=>EV_BASE+'/'+encodeURIComponent(id);
-const NO_WRITE_MSG='일정 편집 권한이 없어요. 설정 > 구글 탭에서 다시 연결해 권한을 허용하세요.';
-const G={status:'off',token:null,expiresAt:0,email:'',events:[],anchor:null,loading:null,syncedAt:null,error:'',note:'',canWrite:true}; // status: off | connecting | on | expired. canWrite: 토큰에 calendar.events 권한이 있는지
+// status: off | connecting | on | expired. needConsent: 토큰에 calendar.events 가 없었거나 API 가 scope 부족 403 을 줘서 미연결로 둔 상태 → 다음 수동 연결은 prompt:'consent' 로 동의 화면을 다시 띄운다
+const G={status:'off',token:null,expiresAt:0,email:'',events:[],anchor:null,loading:null,syncedAt:null,error:'',note:'',needConsent:false};
 const GLINK_KEY='routine-cal-google-linked'; // "연결한 적 있음" 플래그만 저장 (토큰은 절대 저장하지 않음). 로드 시 조용한 재연결 시도의 근거
 const GHINT_KEY='routine-cal-google-hint';   // 마지막으로 연결한 계정 이메일(토큰 아님). 재연결 때 GIS hint 로 넘겨 계정 선택 화면을 건너뛴다
 const isLinked=()=>{try{return localStorage.getItem(GLINK_KEY)==='1'}catch(e){return false}};
@@ -147,16 +150,17 @@ function loadGis(){ // GIS 스크립트는 연결을 시도할 때만 로드 (�
 async function googleConnect(opts){
   // silent: 페이지 로드 시 자동 재연결. prompt:'none' 으로 어떤 UI(계정 선택·동의 팝업)도 띄우지 않고, 실패하면 미연결(expired) + "다시 연결" 버튼만 보여준다.
   // 수동 연결은 prompt:'' (이미 동의한 계정이면 UI 없이, 아니면 동의 화면). 둘 다 마지막 계정 이메일을 hint 로 넘겨 계정 선택 화면을 건너뛴다
+  // 스코프 부족으로 미연결이 된 뒤(needConsent)의 수동 연결은 prompt:'consent' 로 동의 화면을 반드시 다시 띄워 권한을 받는다
   const silent=!!(opts&&opts.silent);
   if(!googleClientId()){if(!silent)toast('config.js 에 GOOGLE_CLIENT_ID 가 없어요');return}
   if(G.status==='connecting'){glog('connect ignored: already connecting');return}
   const prev=G.status;
   const hint=getHint();
-  glog(silent?'auto-reconnect: start':'connect: start',{prevStatus:prev,keepLogin:cfg('googleKeepLogin'),linked:isLinked(),hint:hint||null,gisLoaded:!!(window.google&&google.accounts&&google.accounts.oauth2)});
+  glog(silent?'auto-reconnect: start':'connect: start',{prevStatus:prev,keepLogin:cfg('googleKeepLogin'),linked:isLinked(),hint:hint||null,needConsent:G.needConsent,gisLoaded:!!(window.google&&google.accounts&&google.accounts.oauth2)});
   G.status='connecting';G.error='';if(onGoogleChange)onGoogleChange();
   try{
     await loadGis();
-    const req=Object.assign({prompt:silent?'none':''},hint?{hint}:{});
+    const req=Object.assign({prompt:silent?'none':G.needConsent?'consent':''},hint?{hint}:{});
     glog('GIS ready → requestAccessToken',req);
     const tok=await new Promise((res,rej)=>{
       const tc=google.accounts.oauth2.initTokenClient({client_id:googleClientId(),scope:GOOGLE_SCOPE,
@@ -170,18 +174,23 @@ async function googleConnect(opts){
         }});
       tc.requestAccessToken(req);
     });
-    G.token=tok.access_token;G.expiresAt=Date.now()+(Number(tok.expires_in)||3600)*1000;G.status='on';G.note='';
-    // 허용된 스코프 확인: 예전(readonly) 동의만 있거나 사용자가 체크를 풀면 쓰기 불가 → 탭에 재연결 안내
-    G.canWrite=!tok.scope||/auth\/calendar\.events(\s|$)|auth\/calendar(\s|$)/.test(tok.scope);
-    if(!G.canWrite)G.note='일정 편집 권한이 없어요(읽기 전용으로 연결됨). 다시 연결해서 "Google 캘린더 일정 보기·수정" 권한을 허용하세요.';
-    const cal=await gapiFetch('https://www.googleapis.com/calendar/v3/calendars/primary'); // primary 캘린더 id = 계정 이메일
-    G.email=cal.id||'';G.anchor=null;G.events=[];setLinked(true,G.email);
-    glog(silent?'auto-reconnect: ok':'connect: ok',{email:G.email,canWrite:G.canWrite});
+    // 토큰 응답의 scope 검사: 동의 화면에서 체크를 풀었거나 예전(readonly) 동의만 있으면 calendar.events 가 없다 → 토큰을 버리고 미연결 + 재동의 안내
+    if(!hasEventsScope(tok.scope)){
+      glog(silent?'auto-reconnect: scope insufficient':'connect: scope insufficient',{scope:tok.scope||null});
+      throw Object.assign(new Error('"Google 캘린더 일정 보기·수정" 권한이 허용되지 않았어요'),{scopeInsufficient:true});
+    }
+    G.token=tok.access_token;G.expiresAt=Date.now()+(Number(tok.expires_in)||3600)*1000;G.status='on';G.note='';G.needConsent=false;
+    G.email=await fetchGoogleEmail();G.anchor=null;G.events=[];setLinked(true,G.email);
+    glog(silent?'auto-reconnect: ok':'connect: ok',{email:G.email});
     toast(silent?`Google 다시 연결됨: ${G.email}`:`Google 연결됨: ${G.email}`);
   }catch(e){
     const msg=e&&e.message?e.message:String(e);
     glog(silent?'auto-reconnect: failed':'connect: failed',msg);
-    if(silent&&!G.token){
+    if(e&&e.scopeInsufficient)googleNeedConsent(); // gapiCall 의 scope 부족 403 은 이미 googleNeedConsent 를 거쳤다
+    if(G.needConsent){
+      // 권한이 부족해 미연결로 둔다. 안내(G.note)는 googleNeedConsent 가 썼고, 탭의 "다시 연결 (권한 허용)" 이 prompt:'consent' 로 이어진다
+      G.token=null;G.status='expired';G.error=(silent||(e&&(e.scopeInsufficient||e.status===403)))?'':msg;if(!silent)toast('Google 연결 실패: '+msg); // 권한 부족 자체는 note 로 충분, 그 외(창 닫힘 등)만 error 로도 표시
+    }else if(silent&&!G.token){
       // 자동 팝업으로 넘어가지 않는다. 미연결로 두고 탭에서 "다시 연결" 만 제공
       G.status='expired';G.error='';
       G.note=`이전에 연결한 기록이 있어 조용히 다시 연결하려 했지만 실패했어요 (${msg}). 다시 연결을 누르세요. Chrome 이 서드파티 쿠키나 팝업을 막고 있으면 아래 안내대로 허용한 뒤 새로고침하면 자동으로 이어져요.`;
@@ -199,11 +208,30 @@ function googleAutoReconnect(){ // 페이지 로드 시: '로그인 유지' 가 
 function googleDisconnect(){
   const t=G.token;
   if(t&&window.google&&google.accounts&&google.accounts.oauth2)try{google.accounts.oauth2.revoke(t,()=>{})}catch(e){}
-  G.token=null;G.status='off';G.email='';G.events=[];G.anchor=null;G.loading=null;G.syncedAt=null;G.error='';G.note='';G.canWrite=true;setLinked(false);
+  G.token=null;G.status='off';G.email='';G.events=[];G.anchor=null;G.loading=null;G.syncedAt=null;G.error='';G.note='';G.needConsent=false;setLinked(false);
   toast('Google 연결을 해제했어요. 로컬 데이터는 그대로예요.');notifyGoogle();
 }
 function googleExpire(){G.token=null;G.status='expired';G.events=[];G.anchor=null;G.loading=null;G.note='토큰이 만료됐어요. 다시 연결하면 이어서 볼 수 있어요.';notifyGoogle()}
-// Calendar API 호출. 401 → 만료 처리(재연결 유도), 403(권한 부족) → canWrite=false + 재연결 안내, 그 외 실패 → "상태코드 메시지" 에러
+// 토큰 응답의 scope(공백 구분 목록)에 calendar.events(또는 이를 포함하는 calendar 전체 권한)가 있는지. scope 가 아예 없는 응답은 판단 불가 → 통과시키고 API 403 으로 잡는다
+const hasEventsScope=scope=>{const l=String(scope||'').split(/\s+/).filter(Boolean);return !l.length||l.includes(GOOGLE_SCOPE)||l.includes(GOOGLE_SCOPE_FULL)};
+// 403 응답이 "토큰 scope 부족" 인지 (Calendar API: message "Request had insufficient authentication scopes.", errors[].reason insufficientPermissions,
+// details[].reason ACCESS_TOKEN_SCOPE_INSUFFICIENT). 캘린더 ACL·할당량 같은 다른 403 과 구분한다
+function isScopeError(j,msg){
+  const e=j&&j.error;if(!e)return /insufficient authentication scopes/i.test(msg);
+  return /insufficient authentication scopes/i.test(e.message||msg)||(e.errors||[]).some(x=>x&&x.reason==='insufficientPermissions')||(e.details||[]).some(d=>d&&d.reason==='ACCESS_TOKEN_SCOPE_INSUFFICIENT');
+}
+// 권한 부족: 토큰을 버리고 미연결(expired)로 둔다. 연결 플래그는 유지해 탭에 "다시 연결 (권한 허용)" 을 보여주고, 그 연결은 prompt:'consent' 로 동의 화면을 다시 띄운다
+function googleNeedConsent(){
+  G.token=null;G.status='expired';G.events=[];G.anchor=null;G.loading=null;G.syncedAt=null;G.needConsent=true;G.error='';
+  G.note='Google 캘린더 일정 권한이 허용되지 않아 연결하지 않았어요. "다시 연결 (권한 허용)" 을 누르고 동의 화면에서 "Google 캘린더의 일정 보기·수정" 을 체크하세요.';
+}
+// 계정 이메일: primary 캘린더의 제목(summary)은 계정 이메일이다. calendars.get 은 calendar.events 스코프로 403 이므로
+// 같은 스코프로 허용되는 events.list 응답에 실려 오는 캘린더 summary 를 쓴다(fields 로 summary 만, 이벤트는 1개만 요청)
+async function fetchGoogleEmail(){
+  const j=await gapiFetch(EV_BASE+'?maxResults=1&fields=summary');
+  const s=(j&&j.summary)||'';return /@/.test(s)?s:'';
+}
+// Calendar API 호출. 401 → 만료 처리(재연결 유도), 403 중 scope 부족 → googleNeedConsent(미연결 + 재동의 안내), 그 외 실패 → "상태코드 메시지" 에러
 async function gapiCall(method,url,body){
   if(!G.token)throw new Error('연결되지 않았어요');
   if(Date.now()>G.expiresAt){googleExpire();throw new Error('토큰이 만료됐어요. 다시 연결하세요')}
@@ -213,7 +241,7 @@ async function gapiCall(method,url,body){
   let j=null;try{j=await r.json()}catch(e){}
   if(!r.ok){
     const msg=(j&&j.error&&j.error.message)||r.statusText||'오류';
-    if(r.status===403&&/insufficient|permission|scope|forbidden/i.test(msg)){G.canWrite=false;G.note='일정 편집 권한이 없어요. 다시 연결해서 권한을 허용하세요.';if(onGoogleChange)onGoogleChange()}
+    if(r.status===403&&isScopeError(j,msg)){glog('403 scope insufficient',{method,url});googleNeedConsent();notifyGoogle()}
     throw Object.assign(new Error(`${r.status} ${msg}`),{status:r.status});
   }
   return j;
@@ -279,7 +307,6 @@ function toGoogleBody(d){
 // 로컬(임시) 약속을 구글로 옮긴다. 로컬의 "여러 날 같은 시간" 의미를 지키려고 날짜마다 이벤트 하나씩 만든다. 성공한 것만 로컬에서 지운다
 async function migrateLocalEvents(){
   if(G.status!=='on'){toast('먼저 Google 에 연결하세요');return}
-  if(!G.canWrite){toast(NO_WRITE_MSG);return}
   let moved=0,failed=null;
   for(const ev of [...S.events]){
     try{
@@ -1041,7 +1068,7 @@ function openEvent(ev,dateKey,preset,anchor){ // preset: 드래그 생성 시 {s
     form,cfBox,
     h('div',{class:'acts'},[
       isNew?null:h('button',{class:'quiet danger',onclick:async()=>{
-        if(gmode){if(!G.canWrite){toast(NO_WRITE_MSG);return}setBusy(true);try{await gapiCall('DELETE',gEventUrl(raw.id));done('구글 캘린더에서 삭제했어요')}catch(e){fail(e)}}
+        if(gmode){setBusy(true);try{await gapiCall('DELETE',gEventUrl(raw.id));done('구글 캘린더에서 삭제했어요')}catch(e){fail(e)}}
         else{S.events=S.events.filter(x=>x.id!==ev.id);save();close();render()}
       }},['삭제']),
       h('span',{class:'sp'}),
@@ -1049,7 +1076,6 @@ function openEvent(ev,dateKey,preset,anchor){ // preset: 드래그 생성 시 {s
       h('button',{class:'primary',onclick:async()=>{
         if(!validate())return;
         if(gmode){
-          if(!G.canWrite){toast(NO_WRITE_MSG);return}
           setBusy(true);
           try{
             if(isNew)await gapiCall('POST',EV_BASE,toGoogleBody(draft));else await gapiCall('PATCH',gEventUrl(raw.id),toGoogleBody(draft));
@@ -1186,21 +1212,17 @@ function openSettings(tab){
     if(st==='on'){
       el.appendChild(h('div',{class:'frow'},[h('span',null,['연결됨: ',h('b',null,[G.email||'(이메일 확인 불가)'])])]));
       el.appendChild(h('p',{class:'hint'},[G.loading?'이벤트를 가져오는 중…':G.syncedAt?`마지막 조회 ${pad(G.syncedAt.getHours())}:${pad(G.syncedAt.getMinutes())} · 이벤트 ${G.events.length}개 (표시 중인 달 ±1개월)`:'월간·주간 뷰를 열면 이벤트를 가져와요.']));
-      if(!G.canWrite){
-        el.appendChild(h('div',{class:'cfbox'},[G.note||'일정 편집 권한이 없어요. 다시 연결해서 권한을 허용하세요.']));
-        el.appendChild(h('div',{class:'frow'},[h('button',{class:'primary',onclick:googleConnect},['다시 연결 (권한 허용)'])]));
-      }
       el.appendChild(h('div',{class:'frow'},[h('button',{onclick:()=>{G.anchor=null;render();drawPane()}},['새로고침']),h('button',{class:'danger',onclick:googleDisconnect},['연결 해제'])]));
       if(S.events.length){
         el.appendChild(h('div',{class:'sect'},['임시(로컬) 약속']));
         el.appendChild(h('p',{class:'hint'},[`미연결 상태에서 만든 로컬 약속 ${S.events.length}개가 남아 있어요. 구글 캘린더로 옮기면 로컬에서는 지워져요.`]));
-        el.appendChild(h('div',{class:'frow'},[h('button',{class:'primary',...(G.canWrite?{}:{disabled:''}),onclick:migrateLocalEvents},[`로컬 약속 ${S.events.length}개 구글로 옮기기`])]));
+        el.appendChild(h('div',{class:'frow'},[h('button',{class:'primary',onclick:migrateLocalEvents},[`로컬 약속 ${S.events.length}개 구글로 옮기기`])]));
       }
     }else if(st==='connecting'){
       el.appendChild(h('p',{class:'hint'},['연결 중… 팝업에서 계정을 선택하세요.']));
     }else{
       if(st==='expired')el.appendChild(h('div',{class:'cfbox'},[G.note||'토큰이 만료됐어요. 다시 연결하면 이어서 볼 수 있어요.']));
-      el.appendChild(h('div',{class:'frow'},[h('button',{class:'primary',onclick:googleConnect},[st==='expired'?'다시 연결':'Google 연결'])]));
+      el.appendChild(h('div',{class:'frow'},[h('button',{class:'primary',onclick:()=>googleConnect()},[st!=='expired'?'Google 연결':G.needConsent?'다시 연결 (권한 허용)':'다시 연결'])]));
       if(G.error)el.appendChild(h('p',{class:'hint danger'},[G.error]));
     }
     el.appendChild(h('p',{class:'hint'},['연결하면 약속이 구글 캘린더(primary)에 바로 저장·수정·삭제되고, 표시 중인 달 ±1개월 범위를 읽어 월간·주간·일간에 보여줘요. 반복 일정은 이 일정만 편집돼요. 토큰은 메모리에만 두고 저장하지 않아요. 연결한 적이 있으면 새로고침할 때 화면 없이 조용히 다시 연결을 시도하고, 실패하면 미연결 상태로 두고 "다시 연결" 만 보여줘요.']));

@@ -137,14 +137,16 @@
 
 ## 구글 캘린더 (약속 저장소)
 
-- 설정 모달 구글 탭: `Google 연결` → GIS 팝업(스코프 `calendar.events`; 예전 readonly 동의 사용자는 재동의 필요, 토큰의 `scope` 에 없으면 `G.canWrite=false` 로 두고 탭에 "다시 연결(권한 허용)") → 토큰을 `G.token`(메모리)에만 둔다. **localStorage 에 토큰 저장 금지.** `연결 해제` 는 토큰 revoke + 구글 이벤트만 제거(로컬 데이터 그대로)
+- 설정 모달 구글 탭: `Google 연결` → GIS 팝업(스코프 `calendar.events` 하나) → 토큰을 `G.token`(메모리)에만 둔다. **localStorage 에 토큰 저장 금지.** `연결 해제` 는 토큰 revoke + 구글 이벤트만 제거(로컬 데이터 그대로)
+- **스코프와 호출의 대응**: `calendar.events` 로 허용되는 Calendar API 는 `events.list/insert/patch/delete` 뿐이다. `calendars.get`·`calendarList` 는 403 "Request had insufficient authentication scopes" 를 주므로 **구글 호출은 전부 `EV_BASE`(primary 의 `events`) 아래로만** 간다. 새 호출을 추가할 때 이 규칙을 지킬 것(스코프를 늘리지 않는다)
+- **스코프 검사**: 토큰 응답의 `scope` 에 `calendar.events`(또는 전체 권한 `calendar`)가 없으면(`hasEventsScope`) 토큰을 버리고 `googleNeedConsent()` → **미연결(`expired`) + `G.needConsent=true`**, 탭에 안내와 "다시 연결 (권한 허용)". 그 버튼의 `googleConnect()` 는 `prompt:'consent'` 로 동의 화면을 다시 띄운다(권한을 받으면 `needConsent=false`). API 가 scope 부족 403(`isScopeError`: 메시지 "insufficient authentication scopes" / `errors[].reason` `insufficientPermissions` / `details[].reason` `ACCESS_TOKEN_SCOPE_INSUFFICIENT`)을 줘도 같은 처리. `needConsent` 는 메모리에만 있어 새로고침 뒤의 자동 재연결은 평소처럼 `prompt:'none'` 이고, 실패하면 `expired` + "다시 연결"(`prompt:''` 면 구글이 부족한 권한의 동의 화면을 띄운다)
 - 연결 여부 플래그 `routine-cal-google-linked`(값 `'1'`)와 마지막 계정 이메일 `routine-cal-google-hint`(토큰 아님)를 별도 키에 둔다(백업 데이터 키와 분리). 페이지 로드 시 설정 `googleKeepLogin`(구글 탭 "로그인 유지", 기본 true)이 켜져 있고 플래그가 있으면 `googleAutoReconnect()` → `googleConnect({silent:true})` 가 `requestAccessToken({prompt:'none', hint:이메일})` 로 **UI 없이** 재연결한다. 실패(`consent_required`, `interaction_required`, 쿠키·팝업 차단 등)하면 자동으로 팝업을 띄우지 않고 `expired` 상태 + `G.note` 로 탭에 "다시 연결" 만 보여주며 플래그는 유지(해제 시 둘 다 삭제). 수동 연결은 `prompt:''` + hint. 흐름은 `console.info('[gcal]', …)` 로 남긴다(시작·GIS 준비·요청 옵션·콜백 응답의 error 값)
 - Chrome 이 서드파티 쿠키를 차단하면 조용한 재연결이 실패할 수 있어 구글 탭에 허용 안내를 둔다
 - 상태 `G.status`: `off` | `connecting` | `on` | `expired`. API 가 401 을 주거나 `expires_in` 이 지나면 `expired` 로 바꾸고 이벤트를 비운 뒤 탭에 "다시 연결" 을 보여준다
-- 계정 이메일은 `calendars/primary` 의 `id` 로 얻는다(추가 스코프 없음)
+- 계정 이메일은 `fetchGoogleEmail()`: `events.list?maxResults=1&fields=summary` 응답의 `summary`(primary 캘린더 제목 = 계정 이메일, `@` 가 없으면 빈 문자열). `calendars.get` 은 `calendar.events` 스코프로 403 이라 쓰지 않는다
 - 조회 범위: 표시 중인 달(월간은 `view.ym`, 주간은 주 시작일의 달) ±1개월 = `[전달 1일, 다다음달 1일)`. `ensureGoogleEvents(ym)` 이 같은 달이면 캐시를 쓰고 달이 바뀌면 다시 조회하며, 끝나면 `render()`
 - `toLocalEvent()` 가 구글 이벤트를 로컬 약속 모양으로 바꾼다(`id:'g:…'`, `google:true`, `allDay`, `note`=description). 종일은 `end.date` exclusive 라 하루 뺀다. 자정을 넘는 시간 이벤트는 시작한 날 24:00 까지로 자른다. `cancelled` 는 버린다
-- **약속 저장소**: 연결돼 있으면 약속 추가·수정·삭제 폼(`openEvent`)이 primary 캘린더에 직접 `POST` / `PATCH` / `DELETE` 한다(`gapiCall`, `toGoogleBody`). 성공하면 `G.anchor=null` 로 해당 월을 다시 조회. 실패하면 토스트에 "상태코드 메시지" 를 보여주고 로컬 상태는 바꾸지 않는다. 401 은 만료 처리(재연결 유도), 403(권한 부족) 은 `canWrite=false`
+- **약속 저장소**: 연결돼 있으면 약속 추가·수정·삭제 폼(`openEvent`)이 primary 캘린더에 직접 `POST` / `PATCH` / `DELETE` 한다(`gapiCall`, `toGoogleBody`). 성공하면 `G.anchor=null` 로 해당 월을 다시 조회. 실패하면 토스트에 "상태코드 메시지" 를 보여주고 로컬 상태는 바꾸지 않는다. 401 은 만료 처리(재연결 유도), 403 중 scope 부족은 `googleNeedConsent()`(미연결 + 재동의 안내), 그 외 403(캘린더 ACL·할당량 등)은 토스트만
   - 폼의 메모는 `description` 과 왕복: `draftFromGoogle` 이 description 을 메모로 채우고, `toGoogleBody` 는 항상 `description: note||''` 를 보낸다(비우면 구글 쪽 설명도 지워짐, HTML 설명은 원문 그대로 보임). 다른 기기에서 고친 설명은 달을 옮기는 등 재조회 때 반영된다. 로컬 → 구글 옮기기도 메모를 함께 보낸다
   - 폼의 시작일~종료일은 구글에서는 연속 구간(시작일+시작시간 ~ 종료일+끝시간)이 된다. 종일 이벤트는 폼에 00:00~23:59 로 보이며 그대로 두고 저장하면 종일로 유지(time 입력은 24:00 을 못 보여줌). 자정에 끝나는 이벤트는 다음날 00:00 으로 표기. 반복 일정은 `singleEvents` 인스턴스 id 로 PATCH/DELETE 하므로 "이 일정만" 바뀐다
   - 로컬 `S.events` 는 미연결 상태에서만 새로 만들 수 있고 그때 "임시" 배지(`.tmp`)가 붙는다. 연결 중에 남아 있는 로컬 약속은 배지 없이 편집·삭제만 된다. 구글 탭의 "로컬 약속 N개 구글로 옮기기"(`migrateLocalEvents`) 는 날짜마다 이벤트를 하나씩 만들고 성공한 것만 로컬에서 지운다. JSON 백업에는 로컬 약속만 들어간다(구글 이벤트는 `S` 에 없음)
