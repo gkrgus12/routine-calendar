@@ -16,7 +16,7 @@
 
 - 그냥 `index.html`을 브라우저로 열면 된다 (`file://` 로도 동작)
 - 로컬 서버가 필요하면 `python -m http.server 8000` 후 `http://localhost:8000/`
-- 린트·빌드 단계 없음. 수정 후 새로고침으로 확인하고, 브리프를 끝낼 때 `python tests/run.py`(헤드리스 Chrome) 전체 실행이 통과해야 한다 ("작업 시 주의" 의 하네스 규칙)
+- 린트·빌드 단계 없음. 수정 후 새로고침으로 확인하고, 브리프를 끝낼 때 `python tests/run.py`(헤드리스 Chrome; root 컨테이너면 `CHROME_FLAGS=--no-sandbox`) 전체 실행이 통과해야 한다 ("작업 시 주의" 의 하네스 규칙)
 
 ## 범위
 
@@ -82,7 +82,7 @@
 | `googleKeepLogin` | boolean | 기본 true. 켜져 있으면 로드 시 구글 연결 플래그로 조용히 재연결. 끄면 새로고침 시 미연결 |
 | `routineAlpha` | number | 5~100(%), 기본 22. 일간·주간 뷰 루틴 블록(`.blk.rt`)과 편집 그리드 다른 페이지 루틴(`.blk.other`)의 불투명도. CSS 변수 `--routine-alpha` 로 적용 |
 | `hourHeight` | `'fit'` \| number | 기본 `'fit'`. 세 그리드 공통 시간당 높이. fit 은 그리드 영역 높이 ÷ 표시 시간 수(최소 32px, 그 밑이면 세로 스크롤), 숫자는 고정 px(24~80). `fitGrids()` 가 그리드마다 CSS 변수 `--px` 로 넣고 창 크기 변경 시 다시 계산 |
-| `eventColor` | number | 0~5, 기본 0. 약속 블록·칩 색(`--e0..--e5`, 루틴 팔레트와 겹치지 않는 핑크·레드·인디고·슬레이트·브라운·차콜). `eventStyle()` 이 배경과 글자색을 정한다 |
+| `eventColor` | number | 0~5, 기본 0. 로컬 약속과 캘린더 색이 없는 구글 일정의 블록·칩 색(`--e0..--e5`, 루틴 팔레트와 겹치지 않는 핑크·레드·인디고·슬레이트·브라운·차콜). 구글 일정은 캘린더별 색이 우선(아래 "캘린더별 색"). `eventStyle(mode,ev)` → `eventColorOf(ev)` 가 배경과 글자색을 정한다 |
 | `notifyOn` | boolean | 기본 false. 브라우저 알림 켬. 실제 동작은 `Notification.permission==='granted'` 일 때만(`notifyActive()`) |
 | `notifyEventMin` | number | 0~1440, 기본 10. 약속 시작 몇 분 전에 알릴지 |
 | `notifyRoutineMin` | number | 0~1440, 기본 5. 활성 페이지 루틴 시작 몇 분 전에 알릴지 |
@@ -120,7 +120,7 @@
 
 ## 룩 · 모션 (docs/ref 참고 이미지 기준)
 
-- 룩: iOS 이미지 = 컴포넌트(세그먼트·토글·알약 버튼·그룹 리스트 설정·굵은 제목), macOS 이미지 = 레이아웃(사이드바 216px, 헤더의 요일 작게 + 날짜 굵게, 오늘 빨간 원, 현재 시각 빨간 선 + 시각 pill, 작은 모서리·촘촘한 블록 여백, 긴 약속 블록엔 시간 줄). 캘린더 상단바(`calBar()`, `.bar.cal`)는 macOS 식 grid `1fr auto 1fr`: 왼쪽 큰 제목(월간 `2026년 10월`, 주간은 그 주가 속한 달 `2026년 9월`, 두 달에 걸치면 `2026년 9월–10월`(연도는 주 시작일), 일간 `10월 1일 수요일`), 가운데 일간/주간/월간 세그먼트, 오른쪽 `‹ 오늘 ›` 한 묶음(`.navpair`, 세 뷰 모두 버튼 이름은 오늘)과 그 왼쪽의 + 약속(월간·일간). 제목 길이가 바뀌어도 세그먼트는 정중앙, 화살표는 오른쪽 끝에 고정. 범례 칩은 그리드 위 왼쪽. 규칙은 `styles.css` 맨 아래 "iOS / macOS 룩" 절에 모아 두었다(뒤에 와서 앞 규칙을 덮어씀)
+- 룩: iOS 이미지 = 컴포넌트(세그먼트·토글·알약 버튼·그룹 리스트 설정·굵은 제목), macOS 이미지 = 레이아웃(사이드바 216px, 헤더의 요일 작게 + 날짜 굵게, 오늘 빨간 원, 현재 시각 빨간 선 + 시각 pill, 작은 모서리·촘촘한 블록 여백, 긴 약속 블록엔 시간 줄). 캘린더 상단바(`calBar()`, `.bar.cal`)는 macOS 식 grid `1fr auto 1fr`: 왼쪽 큰 제목(월간 `2026년 10월`, 주간은 그 주가 속한 달 `2026년 9월`, 두 달에 걸치면 `2026년 9월–10월`(연도는 주 시작일), 일간 `10월 1일 수요일`), 가운데 일간/주간/월간 세그먼트, 오른쪽 `‹ 오늘 ›` 한 묶음(`.navpair`, 세 뷰 모두 버튼 이름은 오늘)과 그 왼쪽의 + 약속(월간·일간). 제목 길이가 바뀌어도 세그먼트는 정중앙, 화살표는 오른쪽 끝에 고정. 범례 칩은 그리드 위 왼쪽: 활성 루틴 페이지 → (연결 중이고 목록이 있으면) 읽는 캘린더 `.cal`(이름 + 캘린더 색) → 로컬 `약속` 칩 `.loc`(미연결이거나 로컬 약속이 남아 있을 때만). 규칙은 `styles.css` 맨 아래 "iOS / macOS 룩" 절에 모아 두었다(뒤에 와서 앞 규칙을 덮어씀)
 - 월간 칩은 `eventStyle('chip')` 이 `--ec`(약속 색)만 넘기고 CSS 가 `color-mix` 로 옅은 배경(라이트 16%, 다크 30%) + 진한 글자를 만든다(iOS 칩). 시간축 뷰의 약속 블록은 채움 + 3px 왼쪽 띠(`inset box-shadow`). 월간 요일 헤더는 평일 진하게, `.we`(토·일) 흐리게
 - 모션은 의존성 없이 Web Animations API 로 구현(`anim()`). 스프링은 감쇠 진동(ζ=1−bounce, ω=2π: 정규화 시간 1 에서 안착)을 `linear()` 이징으로 32점 샘플링(`springEasing(bounce)`), 각 150~250ms. `prefers-reduced-motion` 이면 `anim()` 이 즉시 최종 상태를 적용한다. `anim()` 은 `finished` 와 `duration+40ms` 타이머 중 먼저 끝나는 쪽으로 resolve 한다(애니메이션 클록이 멈춘 환경에서도 제거 등 후속 작업 보장)
   - 뷰 전환(`transitionMain`): `render()` 에서 `viewKey`(일/주/월/페이지)가 바뀔 때만 나가는 `.main` 을 `.leaving` 으로 겹쳐 페이드아웃 + 새 화면 페이드인/8px 슬라이드. ‹ › 이동은 즉시
@@ -155,7 +155,8 @@
 - Chrome 이 서드파티 쿠키를 차단하면 조용한 재연결이 실패할 수 있어 구글 탭에 허용 안내를 둔다
 - 상태 `G.status`: `off` | `connecting` | `on` | `expired`. API 가 401 을 주거나 `expires_in` 이 지나면 `expired` 로 바꾸고 이벤트를 비운 뒤 탭에 "다시 연결" 을 보여준다
 - 계정 이메일은 `fetchGoogleEmail()`: `events.list?maxResults=1&fields=summary` 응답의 `summary`(primary 캘린더 제목 = 계정 이메일, `@` 가 없으면 빈 문자열). `calendars.get` 은 `calendar.events` 스코프로 403 이라 쓰지 않는다
-- **읽을 캘린더**(`loadCalendarList`, 연결 직후): `users/me/calendarList?fields=items(id,summary,summaryOverride,backgroundColor,accessRole,primary)` → `G.calendars=[{id,name,color,role,primary}]`(primary 먼저, 없으면 합성; 실패·권한 없음이면 `null` + `G.calNote`). 구글 탭 "읽을 캘린더" 체크박스(이름 + 색 점 `.cdot`, 기본 캘린더는 체크 고정, reader 는 "읽기 전용" 표시). 선택은 `GCALS_KEY` 에 id 배열. `readCalendars()` = primary + 체크한(목록에 있는) 캘린더, 목록이 없으면 `'primary'` 별칭 하나. 체크를 바꾸면 `G.anchor=null;render()`. 범위 밖: 캘린더별 색, 캘린더 간 이동
+- **읽을 캘린더**(`loadCalendarList`, 연결 직후): `users/me/calendarList?fields=items(id,summary,summaryOverride,backgroundColor,accessRole,primary)` → `G.calendars=[{id,name,color,role,primary}]`(primary 먼저, 없으면 합성; 실패·권한 없음이면 `null` + `G.calNote`). 구글 탭 "읽을 캘린더" 체크박스(이름 + 색 점 `.cdot`, 기본 캘린더는 체크 고정, reader 는 "읽기 전용" 표시). 선택은 `GCALS_KEY` 에 id 배열. `readCalendars()` = primary + 체크한(목록에 있는) 캘린더, 목록이 없으면 `'primary'` 별칭 하나. 체크를 바꾸면 `G.anchor=null;render()`. 범위 밖: 캘린더 간 이동
+- **캘린더별 색**: 구글 탭의 캘린더 항목(`.callist .crow`)마다 스와치 줄 `.swatches.cal` = `G`(구글 기본색 사용, 배경은 calendarList 의 `backgroundColor`) + 약속 팔레트 6색. 선택은 `GCOLORS_KEY`=`routine-cal-google-calendar-colors` 에 `{캘린더 id: 0~5}`(구글 기본색은 키 삭제 = null). 읽기 체크를 해제해도 색은 남고, 연결 해제 때 선택 키와 함께 삭제. `eventColorOf(ev)`: 구글 일정이면 그 캘린더(`ev.cal`)의 팔레트 색 → 없으면 `cal.color`(구글 기본색) → 그것도 없으면(목록 없음 `PRIMARY_ONLY`) 설정 `eventColor`; 로컬 약속은 항상 설정 `eventColor`. 월간 칩(`--ec`)·주간/일간 블록·종일 줄·설정의 색 점 모두 같은 함수. 드래그 생성 고스트는 연결 중이면 primary 캘린더 색. 바꾸면 `render()` 로 세 뷰 즉시 반영. 범위 밖: 이벤트 개별 색(구글 `colorId`), 캘린더 이름 변경
 - 조회 범위: 표시 중인 달(월간은 `view.ym`, 주간은 주 시작일의 달) ±1개월 = `[전달 1일, 다다음달 1일)`. `ensureGoogleEvents(ym)` 은 읽을 캘린더마다 `fetchGoogleEvents(cal,…)` 를 **병렬**로 돌리고 **캐시는 캘린더별** `G.calCache[id]={ym,events}` — 캐시가 있는 캘린더는 건너뛰고(체크 해제·재체크는 조회 없이 `assembleGoogleEvents` 로 조립만) 달이 바뀌거나 새로 체크한 것만 조회한다. 쓰기 뒤에는 `invalidateGoogle(calId)` 로 그 캘린더만 지운다. `G.events` 는 선택 캘린더 캐시의 합. 끝나면 `render()`
 - `toLocalEvents()` 가 구글 이벤트 하나를 화면용 조각 배열로 바꾼다(`id:'g:<id>'`, `gid`, `raw`, `google:true`, `allDay`, `recurring`, `link`, `note`=description, `cal`=캘린더 항목 참조). 종일은 `end.date` exclusive 라 하루 뺀 범위 한 조각. 여러 날에 걸친 시간 이벤트는 날짜별 조각(`id:'g:<id>:<날짜>'`, 첫날 start~24:00 `seg:'head'`, 중간 00:00~24:00 `'mid'`, 마지막 00:00~end `'tail'`, 최대 62일)으로 나누고 편집은 `raw` 의 실제 시작·끝으로 한다. `cancelled` 는 버린다
 - **약속 저장소**: 연결돼 있으면 약속 폼(`openEvent`)이 직접 쓴다: **추가는 primary 에 `POST`, 수정·삭제는 그 이벤트가 속한 캘린더(`ev.cal.id`)에 `PATCH`/`DELETE`**(`gEventUrl(id,calId)`, `toGoogleBody`). 읽기 권한뿐인 캘린더(`isReadOnlyCal`: accessRole reader/freeBusyReader)의 일정은 폼에 안내 + 저장·삭제 비활성, 블록 드래그 불가. 성공하면 `invalidateGoogle(calId)` 로 그 캘린더만 다시 조회. 실패하면 토스트에 "상태코드 메시지" 를 보여주고 로컬 상태는 바꾸지 않는다. 401 은 만료 처리(재연결 유도), 403 중 scope 부족은 `googleNeedConsent()`(미연결 + 재동의 안내), 그 외 403(캘린더 ACL·할당량 등)은 토스트만
@@ -164,7 +165,7 @@
   - 로컬 `S.events` 는 미연결 상태에서만 새로 만들 수 있고 그때 "임시" 배지(`.tmp`)가 붙는다. 연결 중에 남아 있는 로컬 약속은 배지 없이 편집·삭제만 된다. 구글 탭의 "로컬 약속 N개 구글로 옮기기"(`migrateLocalEvents`) 는 날짜마다 이벤트를 하나씩 만들고 성공한 것만 로컬에서 지운다. JSON 백업에는 로컬 약속만 들어간다(구글 이벤트는 `S` 에 없음)
 - 표시: `toLocalEvents()` 가 구글 이벤트를 화면용 조각으로 바꾼다(여러 날에 걸친 시간 이벤트는 날짜별 조각, `gid`/`raw` 로 원본 참조). `indexEvents()` 가 로컬 약속과 구글 조각을 함께 날짜별로 묶는다(종일 먼저). 월간은 `.ev`(약속 색 옅은 배경 + 진한 글자), 종일은 `.ev.allday` 한 줄. 주간·일간은 `.blk.evb`(채움), 종일은 헤더 아래 `.wad` 줄. 구글과 로컬을 시각적으로 구분하지 않는다. 클릭하면 편집 모달(`draftFromGoogle(raw)` 로 실제 시작·끝을 채움)
 - 충돌: 시간 있는 구글 이벤트는 로컬 약속과 같은 규칙(`eventConflicts`)으로 활성 루틴과 검사해 경고 점·경고색. 종일 이벤트는 검사하지 않는다
-- 범위 밖: 루틴 업로드, 캘린더별 색, 캘린더 간 이동, 참석자·알림·장소, 반복 규칙 편집
+- 범위 밖: 루틴 업로드, 이벤트 개별 색(colorId), 캘린더 간 이동, 참석자·알림·장소, 반복 규칙 편집
 
 ## 백업 (JSON 내보내기/가져오기)
 
@@ -183,7 +184,7 @@
    - 주간과 일간은 `timeGridBody(dates)` 를 공유한다(7열/1열). 일간(`renderDay`)은 `view.day`(YYYY-MM-DD) 기준으로 ‹ › 하루 이동·오늘·+ 약속. 주간의 오늘 버튼은 이번 주로 간다. 활성 페이지가 없어도 빈 그리드는 항상 그리고 위에 얇은 `.notice` 한 줄만
    - 일간·주간의 빈 시간을 드래그하면 약속이 생긴다(편집 그리드와 같은 30분 스냅·고스트, 놓으면 `openEvent(null, 날짜, {startTime,endTime})`). 5px 미만 움직임은 클릭 = 그 슬롯부터 기본 길이. 루틴 블록은 배경(`.blk.rt`, 흐림)이라 그 위에서 시작해도 된다
    - **약속 블록(`.blk.evb`) 조작은 편집 그리드 루틴 블록과 같다**: 본체 드래그=이동(주간은 다른 날 열로도, `dayAt`), 상·하단 6px `.rs`=시작/끝 조절, 30분 스냅, 최소 30분, 끝은 23:59 까지. 5px 미만 움직임은 클릭 = 편집 팝오버(pointerup 에서 연다, onclick 없음). pointerdown 은 열로 전파하지 않는다. 드래그 중 `eventConflicts` 로 겹침을 계산해 `.cf` 테두리를 미리 보여주고, 놓으면 `commitEventDrag()`: 로컬 약속은 날짜 범위를 요일 차이만큼 옮기고 시간을 바꿔 `save()`, 구글 이벤트는 `start`/`end` 만 PATCH 하고 응답으로 `G.events` 의 그 `gid` 조각을 갈아끼운다(재조회 없음). 실패하면 상태를 바꾸지 않고 `render()` 로 원위치 + 토스트. 종일(`.wad` 줄)과 조각(`seg` 있음: 자정 넘김·여러 날 구글 이벤트, 로컬 자정 넘김)은 `.mv` 없이 클릭만. 놓은 블록은 `pendingSettle` 로 안착. 범위 밖: 월간 뷰 드래그, 반복 이벤트 전체 시리즈 이동
-   - 약속 블록·칩은 구글/로컬 구분 없이 설정의 약속 색 하나를 쓴다(시간축 뷰는 채움 + 왼쪽 띠, 월간 칩은 옅은 배경; 툴팁에 [구글] 없음). 툴팁(`eventTip`)은 제목(+겹침 표시) 다음 줄에 메모의 첫 줄(비어 있지 않은 첫 줄). 구글 일정은 제목 뒤에 ` · 캘린더 이름`(기본 캘린더는 생략). 미연결 상태의 로컬 약속에만 작은 "임시" 배지. 활성 루틴과 겹치면 월간은 점, 시간축 뷰는 경고색 안쪽 테두리
+   - 약속 블록·칩 색: 구글 일정은 캘린더별 색(`eventColorOf`, 지정 없으면 구글 기본색), 로컬 약속은 설정의 약속 색(시간축 뷰는 채움 + 왼쪽 띠, 월간 칩은 옅은 배경; 툴팁에 [구글] 없음). 툴팁(`eventTip`)은 제목(+겹침 표시) 다음 줄에 메모의 첫 줄(비어 있지 않은 첫 줄). 구글 일정은 제목 뒤에 ` · 캘린더 이름`(기본 캘린더는 생략). 미연결 상태의 로컬 약속에만 작은 "임시" 배지. 활성 루틴과 겹치면 월간은 점, 시간축 뷰는 경고색 안쪽 테두리
    - 주간 뷰 겹침 배치(`layoutOverlaps`): 같은 요일에서 겹치는 루틴 블록은 이어져 겹치는 묶음별로 열을 배정해 폭을 n등분(구글 캘린더 방식). 3열 이상이면 라벨을 빼고 title 툴팁만. 겹치지 않는 블록은 기본 폭. 약속 블록은 대상 아님
    - 편집 그리드 블록 조작(`renderEditGrid`): 본체 드래그=이동(요일 간 이동 가능), 상단/하단 6px 핸들(`.rs`)=시작/끝 조절. 30분 스냅, 최소 30분, 06:00~24:00 안으로 클램프. 5px 미만 움직임은 클릭(이름 편집기). 드래그 중엔 시간 텍스트만 바꾸고 놓을 때 `save()`+`render()`. 블록을 누르면 열려 있던 이름 편집기는 `settleLabelEditor()` 로 렌더 없이 확정한다 (드래그 도중 재렌더 방지)
 3. **이벤트 모달 · 설정 · 토스트**: `openEvent`(제목·시작일·종료일·시작 시간·끝 시간·메모 textarea; 데스크톱은 `openPopover`, 좁으면 `openSheet`)

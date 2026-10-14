@@ -6,7 +6,7 @@
   --force-prefers-reduced-motion + 가상 시간으로 열고 --dump-dom 결과에서 <pre id="RESULT"> JSON 을 읽는다
 - 파일 첫 줄의 <!-- variants: s=A s=B@600x800 --> 로 변형(쿼리, 창 크기)을 여러 번 연다. 기본 창 1400x900
 - 실패(FAIL/EXCEPTION/결과 없음)가 하나라도 있으면 종료 코드 1
-- Chrome 경로: 환경변수 CHROME, 아니면 PATH·기본 설치 위치
+- Chrome 경로: 환경변수 CHROME, 아니면 PATH·기본 설치 위치. 추가 플래그는 환경변수 CHROME_FLAGS (root 컨테이너라면 --no-sandbox)
 """
 import argparse, functools, glob, html, json, os, re, shutil, subprocess, sys, tempfile, threading
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
@@ -56,7 +56,9 @@ def run_one(chrome, url, wh, timeout):
     profile = tempfile.mkdtemp(prefix='rc-test-')
     args = [chrome, '--headless=new', '--disable-gpu', '--no-first-run', '--no-default-browser-check',
             '--user-data-dir=' + profile, '--force-prefers-reduced-motion', '--virtual-time-budget=60000',
-            '--window-size=' + wh.replace('x', ','), '--enable-logging=stderr', '--v=0', '--dump-dom', url]
+            '--window-size=' + wh.replace('x', ','), '--enable-logging=stderr', '--v=0']
+    args += os.environ.get('CHROME_FLAGS', '').split()  # 예: 컨테이너에서 root 로 돌릴 때 CHROME_FLAGS=--no-sandbox
+    args += ['--dump-dom', url]
     console = ''
     try:
         p = subprocess.run(args, capture_output=True, text=True, encoding='utf-8', errors='replace', timeout=timeout)

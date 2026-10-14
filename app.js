@@ -146,9 +146,12 @@ const GHINT_KEY='routine-cal-google-hint';   // 마지막으로 연결한 계정
 const isLinked=()=>{try{return localStorage.getItem(GLINK_KEY)==='1'}catch(e){return false}};
 const getHint=()=>{try{return localStorage.getItem(GHINT_KEY)||''}catch(e){return ''}};
 const GCALS_KEY='routine-cal-google-cals';  // 읽을 캘린더 id 목록(JSON 배열). 계정에 묶인 값이라 백업 데이터 키와 분리. primary 는 항상 읽으므로 넣지 않아도 된다. 해제 시 삭제
-const setLinked=(on,email)=>{try{if(on){localStorage.setItem(GLINK_KEY,'1');if(email)localStorage.setItem(GHINT_KEY,email)}else{localStorage.removeItem(GLINK_KEY);localStorage.removeItem(GHINT_KEY);localStorage.removeItem(GCALS_KEY)}}catch(e){}};
+const GCOLORS_KEY='routine-cal-google-calendar-colors'; // 캘린더별 색 {캘린더 id: 약속 팔레트 인덱스 0~5 | null}. null·없음 = 구글 기본색(calendarList backgroundColor). 체크를 해제해도 남고, 연결 해제 때만 삭제
+const setLinked=(on,email)=>{try{if(on){localStorage.setItem(GLINK_KEY,'1');if(email)localStorage.setItem(GHINT_KEY,email)}else{localStorage.removeItem(GLINK_KEY);localStorage.removeItem(GHINT_KEY);localStorage.removeItem(GCALS_KEY);localStorage.removeItem(GCOLORS_KEY)}}catch(e){}};
 const getCalSel=()=>{try{const v=JSON.parse(localStorage.getItem(GCALS_KEY)||'null');return Array.isArray(v)?v.filter(x=>typeof x==='string'):null}catch(e){return null}};
 const setCalSel=ids=>{try{localStorage.setItem(GCALS_KEY,JSON.stringify(ids))}catch(e){}};
+const getCalColors=()=>{try{const v=JSON.parse(localStorage.getItem(GCOLORS_KEY)||'null');return v&&typeof v==='object'&&!Array.isArray(v)?v:{}}catch(e){return {}}};
+const setCalColor=(id,idx)=>{const m=getCalColors();if(idx===null)delete m[id];else m[id]=idx;try{localStorage.setItem(GCOLORS_KEY,JSON.stringify(m))}catch(e){}};
 const glog=(...a)=>{try{console.info('[gcal]',...a)}catch(e){}}; // 연결 흐름 추적용 콘솔 로그 (호출 여부·순서·응답 error 값)
 const googleClientId=()=>window.GOOGLE_CLIENT_ID||''; // config.js 의 var GOOGLE_CLIENT_ID
 let onGoogleChange=null; // 설정 모달 구글 탭이 열려 있으면 패널 다시 그리기
@@ -557,19 +560,31 @@ const LABEL_VARIANTS=[[.08,-.16],[-.08,-.08],[.08,.08],[-.08,.16],[.10,.24],[-.1
 let PBASE=[]; // 현재 테마의 --p0..--p5 실제 색(HSL). render() 마다 갱신하므로 테마가 바뀌면 변형색도 따라감
 const ECOL=['var(--e0)','var(--e1)','var(--e2)','var(--e3)','var(--e4)','var(--e5)']; // 약속 색 팔레트 (루틴 팔레트와 겹치지 않게 고른 6색)
 let EBASE=[];
+let CCOLS={}; // 캘린더별 색 선택(GCOLORS_KEY). render() 마다 다시 읽는다
 function refreshPalette(){
   const cs=getComputedStyle(document.documentElement);
   PBASE=PCOL.map((_,i)=>hexToHsl(cs.getPropertyValue('--p'+i).trim()));
   EBASE=ECOL.map((_,i)=>hexToHsl(cs.getPropertyValue('--e'+i).trim()));
+  CCOLS=getCalColors();
   document.documentElement.style.setProperty('--routine-alpha',String(cfg('routineAlpha')/100)); // 일간·주간 루틴 블록 + 편집 그리드 other 블록 투명도
 }
-// 약속 블록·칩 인라인 스타일: 설정의 약속 색 하나로 채우고, 밝은 색이면 글자를 어둡게
+// 캘린더 색 선택: 팔레트 인덱스(0~5)면 그 값, 없거나 null 이면 null(= 구글 기본색)
+function calColorIdx(c){const v=c?CCOLS[c.id]:undefined;return Number.isInteger(v)&&v>=0&&v<ECOL.length?v:null}
+// 약속 색 {css, hsl}: 구글 이벤트는 그 캘린더의 색(팔레트 지정 → --eN, 아니면 calendarList 의 backgroundColor), 캘린더 색이 없거나(목록 없음) 로컬 약속이면 설정의 약속 색
+function eventColorOf(ev){
+  const c=ev&&ev.google&&ev.cal;
+  if(c){const i=calColorIdx(c);if(i!==null)return {css:ECOL[i],hsl:EBASE[i]};if(c.color)return {css:c.color,hsl:hexToHsl(c.color)}}
+  const ci=cfg('eventColor')%ECOL.length;return {css:ECOL[ci],hsl:EBASE[ci]};
+}
+const calColorCss=c=>eventColorOf({google:true,cal:c}).css; // 범례·설정 스와치용 캘린더 색
+const primaryCal=()=>(G.calendars&&G.calendars.find(c=>c.primary))||null;
+// 약속 블록·칩 인라인 스타일: ev 의 색(eventColorOf)으로 채우고, 밝은 색이면 글자를 어둡게. ev 없으면 설정의 약속 색
 // 블록·칩 툴팁: 제목(+겹침 표시) 뒤에 메모의 첫 줄(비어 있지 않은 첫 줄). 조각은 원본(src)의 메모
 // 구글 일정은 제목 뒤에 캘린더 이름(기본 캘린더는 생략)
 function eventTip(ev,extra){const raw=ev.note||(ev.src&&ev.src.note)||'';const first=raw.split(/\r?\n/).map(l=>l.trim()).find(l=>l);const cal=ev.cal&&!ev.cal.primary&&ev.cal.name?' · '+ev.cal.name:'';return ev.title+(extra||'')+cal+(first?'\n'+first:'')}
-function eventStyle(mode){const ci=cfg('eventColor')%ECOL.length;const hsl=EBASE[ci];
-  if(mode==='chip')return '--ec:'+ECOL[ci]; // 월간 칩: 색만 넘기고 옅은 배경·진한 글자는 CSS 가 섞음 (iOS 월간 칩)
-  return 'background:'+ECOL[ci]+(hsl&&hsl[2]>.62?';color:#14181d':';color:#fff')}
+function eventStyle(mode,ev){const {css,hsl}=eventColorOf(ev);
+  if(mode==='chip')return '--ec:'+css; // 월간 칩: 색만 넘기고 옅은 배경·진한 글자는 CSS 가 섞음 (iOS 월간 칩)
+  return 'background:'+css+(hsl&&hsl[2]>.62?';color:#14181d':';color:#fff')}
 // 블록 인라인 스타일(배경, 필요하면 글자색). colorByLabel 이 켜진 페이지는 라벨 해시로 고른 변형색, 이름 없으면 페이지 기본색
 function blockStyle(p,label,withInk){
   const ci=p.color%PCOL.length,base=PCOL[ci],k=labelKey(label);
@@ -688,7 +703,7 @@ function renderMonth(main){
       const cf=!ev.allDay&&eventConflicts(ev).some(c=>c.date===key);
       // 구글 이벤트는 점선 테두리(.g), 종일 이벤트는 날짜 상단 한 줄(.allday, 정렬로 맨 위)
       const tmp=!ev.google&&G.status!=='on'; // 미연결 상태의 로컬 약속 = 임시 배지 (구글/로컬 구분 표기는 그 외에 없음)
-      cell.appendChild(h('div',{class:'ev'+(ev.allDay?' allday':'')+(tmp?' tmp':''),style:eventStyle('chip'),'data-src':ev.google?'g':'l',title:eventTip(ev),onclick:(e)=>{e.stopPropagation();openEvent(ev.src||ev,null,null,{el:e.currentTarget,x:e.clientX,y:e.clientY})}},[
+      cell.appendChild(h('div',{class:'ev'+(ev.allDay?' allday':'')+(tmp?' tmp':''),style:eventStyle('chip',ev),'data-src':ev.google?'g':'l',title:eventTip(ev),onclick:(e)=>{e.stopPropagation();openEvent(ev.src||ev,null,null,{el:e.currentTarget,x:e.clientX,y:e.clientY})}},[
         cf?h('span',{class:'cf',title:'활성 루틴과 겹침'}):null,
         tmp?h('span',{class:'tag'},['임시']):null,
         ev.allDay?null:h('span',{class:'t'},[ev.startTime]),h('span',{class:'ti'},[ev.title||'(제목 없음)'])
@@ -745,7 +760,9 @@ function timeGridBody(dates,key){
   if(!act.length)body.appendChild(h('div',{class:'notice'},['활성화된 루틴 페이지가 없어요. 왼쪽 목록에서 스위치를 켜면 루틴이 함께 보여요.'])); // 그리드는 항상 표시
   const lg=h('div',{class:'legend'});
   act.forEach(p=>lg.appendChild(h('span',null,[h('i',{style:'background:'+PCOL[p.color%PCOL.length]}),p.name])));
-  lg.appendChild(h('span',null,[h('i',{style:eventStyle()}),'약속']));
+  // 연결 중이고 캘린더 목록이 있으면 읽는 캘린더(primary + 체크한 것)를 이름+색으로. 로컬 약속 칩은 미연결이거나 로컬 약속이 남아 있을 때만
+  if(G.status==='on'&&G.calendars)readCalendars().forEach(c=>lg.appendChild(h('span',{class:'cal','data-cal':c.id},[h('i',{style:'background:'+calColorCss(c)}),c.name])));
+  if(G.status!=='on'||!G.calendars||S.events.length)lg.appendChild(h('span',{class:'loc'},[h('i',{style:eventStyle()}),'약속']));
   body.appendChild(lg);
   // 설정 범위 밖 시간은 위아래 띠로 접는다. 펼치면(그 주/그 날에서만) 그쪽 범위가 그리드에 포함된다
   const base0=cfg('dayStart'),base1=cfg('dayEnd');const ex=expandFor(key);
@@ -762,7 +779,7 @@ function timeGridBody(dates,key){
   const adWeek=dates.map(d=>(evIdx[ymd(d)]||[]).filter(ev=>ev.allDay));
   if(adWeek.some(a=>a.length)){
     grid.appendChild(h('div',{class:'wad lab'},['종일']));
-    adWeek.forEach(list=>grid.appendChild(h('div',{class:'wad'},list.map(ev=>h('div',{class:'ev allday',style:eventStyle(),'data-src':ev.google?'g':'l',title:eventTip(ev),onclick:e=>openEvent(ev.src||ev,null,null,{el:e.currentTarget,x:e.clientX,y:e.clientY})},[h('span',{class:'ti'},[ev.title])])))));
+    adWeek.forEach(list=>grid.appendChild(h('div',{class:'wad'},list.map(ev=>h('div',{class:'ev allday',style:eventStyle(null,ev),'data-src':ev.google?'g':'l',title:eventTip(ev),onclick:e=>openEvent(ev.src||ev,null,null,{el:e.currentTarget,x:e.clientX,y:e.clientY})},[h('span',{class:'ti'},[ev.title])])))));
   }
   // 접힌 띠: [lo,hi) 시간대에 걸친 루틴·약속 개수를 세서 표시. 아무것도 없으면 아주 얇게
   const countHidden=(lo,hi)=>{const rt=new Set(),ev=new Set();
@@ -807,7 +824,7 @@ function timeGridBody(dates,key){
       // 종일(위 줄)과 조각(seg: 자정 넘김·여러 날 구글 이벤트)은 클릭만. 드래그 중엔 eventConflicts 로 겹침을 계산해 .cf 테두리를 미리 보여준다
       const movable=!ev.seg&&!(ev.cal&&isReadOnlyCal(ev.cal)); // 조각과 읽기 전용 캘린더 일정은 클릭만
       const lbl=h('div',{class:'l'},[(tmp?'임시 · ':'')+(ev.title||'(제목 없음)')]);
-      const blk=h('div',{class:'blk evb'+(cf?' cf':'')+segCls+((e-s)>=60?' tall':'')+(movable?' mv':''),'data-src':ev.google?'g':'l','data-id':ev.id,style:`top:${cy((s-H0*60)/60)};height:calc(var(--px) * ${(e-s)/60} - 2px);${eventStyle()}`,title:eventTip(ev,cf?' · 활성 루틴과 겹침':'')},
+      const blk=h('div',{class:'blk evb'+(cf?' cf':'')+segCls+((e-s)>=60?' tall':'')+(movable?' mv':''),'data-src':ev.google?'g':'l','data-id':ev.id,style:`top:${cy((s-H0*60)/60)};height:calc(var(--px) * ${(e-s)/60} - 2px);${eventStyle(null,ev)}`,title:eventTip(ev,cf?' · 활성 루틴과 겹침':'')},
         [lbl,(e-s)>=60?h('div',{class:'tm'},[ev.startTime+'–'+ev.endTime]):null,movable?h('div',{class:'rs t'}):null,movable?h('div',{class:'rs b'}):null]);
       let dg=null;
       const open=pe=>openEvent(ev.src||ev,null,null,{el:blk,x:pe.clientX,y:pe.clientY});
@@ -857,7 +874,7 @@ function timeGridBody(dates,key){
     col.addEventListener('pointerdown',ev=>{
       if(ev.button!==0&&ev.pointerType==='mouse')return;
       drag={s:slotAt(ev),e:slotAt(ev),x0:ev.clientX,y0:ev.clientY,moved:false};col.setPointerCapture(ev.pointerId);
-      ghost=h('div',{class:'blk evb ghost',style:eventStyle()});col.appendChild(ghost);paint();
+      ghost=h('div',{class:'blk evb ghost',style:eventStyle(null,G.status==='on'?{google:true,cal:primaryCal()}:null)});col.appendChild(ghost);paint();
     });
     col.addEventListener('pointermove',ev=>{if(!drag)return;if(!drag.moved&&Math.hypot(ev.clientX-drag.x0,ev.clientY-drag.y0)>=5)drag.moved=true;drag.e=slotAt(ev);paint()});
     const finish=(pe)=>{
@@ -1434,7 +1451,7 @@ function openSettings(tab){
     const sw=h('div',{class:'swatches'});
     ECOL.forEach((c,i)=>sw.appendChild(h('button',{class:i===cfg('eventColor')?'sel':'',style:'background:'+c,title:'약속 색 '+(i+1),'aria-pressed':i===cfg('eventColor')?'true':'false',onclick:()=>apply(()=>{S.settings.eventColor=i})})));
     el.appendChild(h('div',{class:'frow'},[sw]));
-    el.appendChild(h('p',{class:'hint'},['월간·주간·일간의 모든 약속 블록에 한 가지 색으로 적용돼요. 루틴 팔레트와 겹치지 않는 색들이에요.']));
+    el.appendChild(h('p',{class:'hint'},['로컬(임시) 약속과 색을 정하지 않은 캘린더의 일정에 적용돼요. 구글 캘린더별 색은 구글 탭에서 고를 수 있어요. 루틴 팔레트와 겹치지 않는 색들이에요.']));
   }
   function backupTab(el){
     const countOf=s=>`페이지 ${s.pages.length}개 (루틴 ${s.pages.reduce((n,p)=>n+p.items.length,0)}개) · 약속 ${s.events.length}개`;
@@ -1504,13 +1521,17 @@ function openSettings(tab){
       el.appendChild(h('div',{class:'sect'},['읽을 캘린더']));
       if(G.calendars){
         const sel=new Set(getCalSel()||[]);const list=h('div',{class:'callist'});
-        G.calendars.forEach(c=>list.appendChild(h('label',{class:'chk'},[
-          h('input',{type:'checkbox',...(c.primary||sel.has(c.id)?{checked:''}:{}),...(c.primary?{disabled:''}:{}),onchange:e=>{const s=new Set(getCalSel()||[]);if(e.target.checked)s.add(c.id);else s.delete(c.id);setCalSel([...s]);G.anchor=null;render();drawPane()}}),
-          h('i',{class:'cdot',style:'background:'+(c.color||'var(--muted)')}),c.name,
-          c.primary?h('span',{class:'hint',style:'margin:0 0 0 2px'},['(기본 · 약속 추가 대상)']):isReadOnlyCal(c)?h('span',{class:'hint',style:'margin:0 0 0 2px'},['읽기 전용']):null
-        ])));
+        // 캘린더별 색: 각 항목 아래 스와치(구글 기본색 사용 + 약속 팔레트 6색). 선택은 GCOLORS_KEY(체크를 해제해도 유지). 바꾸면 세 뷰를 바로 다시 그린다
+        G.calendars.forEach(c=>{const ci=calColorIdx(c);const pick=idx=>{setCalColor(c.id,idx);render();drawPane()};
+          const sw=h('div',{class:'swatches cal'},[h('button',{class:'auto'+(ci===null?' sel':''),style:'background:'+(c.color||'var(--muted)'),title:'구글 기본색 사용','aria-label':c.name+' 색: 구글 기본색 사용','aria-pressed':ci===null?'true':'false',onclick:()=>pick(null)},['G'])]);
+          ECOL.forEach((col,i)=>sw.appendChild(h('button',{class:i===ci?'sel':'',style:'background:'+col,title:'약속 색 '+(i+1),'aria-label':c.name+' 색: 약속 색 '+(i+1),'aria-pressed':i===ci?'true':'false',onclick:()=>pick(i)})));
+          list.appendChild(h('div',{class:'crow','data-cal':c.id},[h('label',{class:'chk'},[
+            h('input',{type:'checkbox',...(c.primary||sel.has(c.id)?{checked:''}:{}),...(c.primary?{disabled:''}:{}),onchange:e=>{const s=new Set(getCalSel()||[]);if(e.target.checked)s.add(c.id);else s.delete(c.id);setCalSel([...s]);G.anchor=null;render();drawPane()}}),
+            h('i',{class:'cdot',style:'background:'+calColorCss(c)}),c.name,
+            c.primary?h('span',{class:'hint',style:'margin:0 0 0 2px'},['(기본 · 약속 추가 대상)']):isReadOnlyCal(c)?h('span',{class:'hint',style:'margin:0 0 0 2px'},['읽기 전용']):null
+          ]),sw]))});
         el.appendChild(list);
-        el.appendChild(h('p',{class:'hint'},['체크한 캘린더의 일정을 월간·주간·일간에 보여주고 겹침 검사에 넣어요. 약속 추가는 기본 캘린더에, 수정·삭제는 그 일정이 속한 캘린더에 반영돼요. 읽기 전용 캘린더의 일정은 보기만 해요.']));
+        el.appendChild(h('p',{class:'hint'},['체크한 캘린더의 일정을 월간·주간·일간에 보여주고 겹침 검사에 넣어요. 약속 추가는 기본 캘린더에, 수정·삭제는 그 일정이 속한 캘린더에 반영돼요. 읽기 전용 캘린더의 일정은 보기만 해요. 색은 캘린더마다 고를 수 있고(G = 구글 기본색), 체크를 해제해도 색은 남아요.']));
       }else{
         el.appendChild(h('div',{class:'cfbox'},[G.calNote||'캘린더 목록이 없어요.']));
         if(!G.canList)el.appendChild(h('div',{class:'frow'},[h('button',{class:'primary',onclick:()=>googleConnect({consent:true})},['다시 연결 (권한 허용)'])]));
