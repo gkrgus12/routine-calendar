@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="ko"><head><meta charset="utf-8"><title>약속 폼 시간 휠 피커</title>
+<link rel="stylesheet" href="../styles.css"></head>
+<body><div class="app" id="app"></div>
+<script src="lib.js"></script>
+<script>
+// 약속 폼의 휠 피커(열기·조작·닫기)와 길이 유지 규칙. 키 입력은 KeyboardEvent 를 필드/피커에 직접 보낸다
+run(async()=>{
+  seed({pages:[],events:[
+      {id:'E',title:'기존',startDate:'2026-10-12',endDate:'2026-10-12',startTime:'09:00',endTime:'10:30'},
+      {id:'X',title:'자정',startDate:'2026-10-12',endDate:'2026-10-13',startTime:'23:00',endTime:'01:00'},
+      {id:'O',title:'홀수분',startDate:'2026-10-20',endDate:'2026-10-20',startTime:'10:07',endTime:'10:37'}],
+    settings:{defaultStart:'10:00',defaultDur:60,weekStart:'mon',dayStart:6,dayEnd:24}});
+  await loadApp();
+  RC.view.type='month';RC.view.ym='2026-10';RC.render();await sleep(20);
+  const TROW=32;
+  const md=()=>document.querySelector('.md:not(.settings)');
+  const tf=()=>[...md().querySelectorAll('.tf')]; // [시작, 끝]
+  const times=()=>tf().map(f=>f.textContent).join('–');
+  const dates=()=>[...md().querySelectorAll('input[type=date]')].map(i=>i.value).join('–');
+  const pick=()=>md()&&md().querySelector('.tpick');
+  const key=(el,k)=>el.dispatchEvent(new KeyboardEvent('keydown',{key:k,bubbles:true,cancelable:true}));
+  const typeOn=(field,str)=>{key(field,str[0]);for(const ch of str.slice(1))key(pick(),ch)}; // 첫 키는 필드(피커를 열며 전달), 나머지는 피커
+  const wheelOf=col=>pick().querySelector(`.wheel[data-col=${col}]`);
+  const selOf=col=>{const r=wheelOf(col).querySelector('.wrow.on');return r?r.textContent:null};
+  const tyOf=col=>parseFloat((/translateY\((-?[\d.]+)px\)/.exec(wheelOf(col).querySelector('.wlist').style.transform)||[])[1]);
+  const spin=(col,n)=>{for(let i=0;i<Math.abs(n);i++)wheelOf(col).dispatchEvent(new WheelEvent('wheel',{deltaY:n>0?100:-100,bubbles:true,cancelable:true}))};
+  const pev=(type,el,y,extra)=>el.dispatchEvent(new PointerEvent(type,Object.assign({bubbles:true,cancelable:true,pointerId:1,pointerType:'mouse',button:0,clientX:el.getBoundingClientRect().left+20,clientY:y},extra||{})));
+  const shift=(d,n)=>{const x=RC.parse(d);x.setDate(x.getDate()+n);return RC.ymd(x)};
+  const closePopover=async()=>{document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape'}));await sleep(30)};
+  const chip=t=>[...document.querySelectorAll('.mgrid .ev')].find(e=>e.textContent.includes(t));
+
+  // 1. 새 약속: 기본 10:00 + 60분. 시작 필드 클릭 → 피커
+  btn('+ 약속').click();await sleep(30);
+  check('새 약속 기본 시간 10:00–11:00',times()==='10:00–11:00',times());
+  check('time 입력은 없음(.tf 버튼 2개)',md().querySelectorAll('input[type=time]').length===0&&tf().length===2);
+  tf()[0].click();await sleep(10);
+  check('피커 열림: 폼 안, 두 열, 높이 5줄',!!pick()&&md().contains(pick())&&pick().querySelectorAll('.wheel').length===2&&near(pick().getBoundingClientRect().height,TROW*5,3),pick()&&pick().getBoundingClientRect().height);
+  check('선택 행 10 / 00, 시 열 활성',selOf('h')==='10'&&selOf('m')==='00'&&wheelOf('h').classList.contains('act'));
+  check('시 열 transform = 선택 행이 가운데',near(tyOf('h'),(2-10)*TROW));
+  check('필드 .open',tf()[0].classList.contains('open'));
+  // 2. 숫자 타이핑: 1,7 → 17:00, 끝 18:00 (길이 60 유지). 분 열로 넘어감
+  key(pick(),'1');key(pick(),'7');
+  check('완료 조건 1: 시작 17:00 → 끝 18:00',times()==='17:00–18:00',times());
+  check('두 자리 뒤 분 열 활성',wheelOf('m').classList.contains('act')&&selOf('h')==='17');
+  key(pick(),'Enter');await sleep(10);
+  check('Enter 로 닫힘, 포커스는 필드로',!pick()&&document.activeElement===tf()[0]&&!tf()[0].classList.contains('open'));
+  // 3. 끝을 19:30 으로 → 길이 150. 시작 18:00 → 끝 20:30
+  typeOn(tf()[1],'1930');key(pick(),'Enter');
+  check('끝 19:30 직접 입력',times()==='17:00–19:30',times());
+  typeOn(tf()[0],'18');key(pick(),'Enter');
+  check('완료 조건 2: 시작 18:00 → 끝 20:30',times()==='18:00–20:30',times());
+  // 4. 저장 → 로컬 약속
+  const sd0=dates().split('–')[0];
+  const ti=md().querySelector('input[type=text]');ti.value='새1';ti.dispatchEvent(new Event('input',{bubbles:true}));btn('추가').click();await sleep(30);
+  const n1=RC.S.events.find(e=>e.title==='새1');
+  check('저장: 18:00–20:30 같은 날',!!n1&&n1.startTime==='18:00'&&n1.endTime==='20:30'&&n1.startDate===sd0&&n1.endDate===sd0,n1);
+  // 5. 휠로 23:30 → 끝 00:30 + 종료일 다음 날 (새 약속, 길이 60)
+  btn('+ 약속').click();await sleep(30);tf()[0].click();await sleep(10);
+  const sd=dates().split('–')[0];
+  spin('h',13);
+  check('휠 13눈금: 시 23 (한 눈금 = 한 칸)',selOf('h')==='23'&&times()==='23:00–00:00',times());
+  spin('h',3);check('시는 23 에서 더 안 올라감',selOf('h')==='23');
+  spin('m',6);
+  check('완료 조건 3: 23:30 → 끝 00:30',times()==='23:30–00:30',times());
+  check('종료일 = 시작일 + 1',dates()===sd+'–'+shift(sd,1),dates());
+  check('분 열 활성(휠을 돌린 열)',wheelOf('m').classList.contains('act'));
+  // 6. 드래그: 시 열을 2칸 아래로 끌어 올림(값 −2) → 21, 스냅 transform. 끝 22:30 같은 날로 복귀
+  let w=wheelOf('h'),r=w.getBoundingClientRect(),y0=r.top+r.height/2;
+  pev('pointerdown',w,y0);pev('pointermove',w,y0+TROW);pev('pointermove',w,y0+2*TROW);
+  check('드래그 중: 값 21, 중간 오프셋 없음',selOf('h')==='21'&&near(tyOf('h'),(2-21)*TROW),{sel:selOf('h'),ty:tyOf('h')});
+  pev('pointermove',w,y0+2*TROW+10);
+  check('드래그 중 오프셋 반영(스냅 전): 아래로 10px 더 끌면 목록도 10px 아래',near(tyOf('h'),(2-21)*TROW+10),tyOf('h'));
+  pev('pointerup',w,y0+2*TROW+10);
+  check('놓으면 스냅: 21:30–22:30, 종료일 같은 날',near(tyOf('h'),(2-21)*TROW)&&times()==='21:30–22:30'&&dates()===sd+'–'+sd,{ty:tyOf('h'),times:times(),dates:dates()});
+  // 7. 행 클릭(5px 미만): 가운데 한 칸 위 행 → 20
+  w=wheelOf('h');r=w.getBoundingClientRect();pev('pointerdown',w,r.top+1.5*TROW);pev('pointerup',w,r.top+1.5*TROW+2);
+  check('행 클릭 → 20:30',selOf('h')==='20'&&times()==='20:30–21:30',times());
+  // 8. 화살표: ↓ → 21, → 분 열, ↑ → 25
+  key(pick(),'ArrowDown');key(pick(),'ArrowRight');key(pick(),'ArrowUp');
+  check('↓ → 분 열 ↑: 21:25–22:25',times()==='21:25–22:25'&&wheelOf('m').classList.contains('act'),times());
+  check('분 열 transform',near(tyOf('m'),(2-5)*TROW));
+  // 9. 바깥 클릭(제목 입력) → 피커 닫힘
+  md().querySelector('input[type=text]').dispatchEvent(new PointerEvent('pointerdown',{bubbles:true,pointerId:1}));await sleep(10);
+  check('바깥 클릭으로 닫힘',!pick()&&!tf()[0].classList.contains('open'));
+  // 10. 첫 자리 3 이상은 즉시 시 확정 + 분 열
+  typeOn(tf()[0],'3');
+  check("'3' → 03:25, 분 열 활성",times()==='03:25–04:25'&&wheelOf('m').classList.contains('act'),times());
+  key(pick(),'Escape');
+  check('Esc 는 피커만 닫음(팝오버 유지)',!pick()&&!!md());
+  await closePopover();check('팝오버 닫힘',!md());
+  // 11. 기존 약속 09:00–10:30 (길이 90): 시작 14 → 끝 15:30, 끝 16:00 → 길이 120, 시작 15 → 끝 17:00
+  chip('기존').click();await sleep(30);
+  check('기존 약속 필드',times()==='09:00–10:30');
+  typeOn(tf()[0],'14');key(pick(),'Enter');check('기존: 시작 14:00 → 끝 15:30(길이 90 유지)',times()==='14:00–15:30',times());
+  typeOn(tf()[1],'1600');key(pick(),'Enter');check('끝 16:00 → 길이 120',times()==='14:00–16:00',times());
+  typeOn(tf()[0],'15');key(pick(),'Enter');check('시작 15:00 → 끝 17:00',times()==='15:00–17:00',times());
+  btn('저장').click();await sleep(30);
+  const E=RC.S.events.find(e=>e.id==='E');check('저장 반영',E.startTime==='15:00'&&E.endTime==='17:00',E);
+  // 12. 자정 넘김 약속(23:00 → 다음 날 01:00, 길이 120): 시작 22 → 끝 00:00 다음 날 유지, 시작 09 → 끝 11:00 같은 날
+  chip('자정').click();await sleep(30);
+  check('자정 약속 필드·날짜',times()==='23:00–01:00'&&dates()==='2026-10-12–2026-10-13',[times(),dates()]);
+  typeOn(tf()[0],'22');key(pick(),'Enter');
+  check('시작 22:00 → 끝 00:00, 종료일 다음 날 유지',times()==='22:00–00:00'&&dates()==='2026-10-12–2026-10-13',[times(),dates()]);
+  typeOn(tf()[0],'09');key(pick(),'Enter');
+  check('시작 09:00 → 끝 11:00, 종료일 같은 날로',times()==='09:00–11:00'&&dates()==='2026-10-12–2026-10-12',[times(),dates()]);
+  // 13. 시작일을 바꿔도 길이 유지(종료일 따라옴)
+  const sdI=md().querySelector('input[type=date]');sdI.value='2026-10-20';sdI.dispatchEvent(new Event('input',{bubbles:true}));
+  check('시작일 변경 → 종료일 따라옴, 시간 유지',dates()==='2026-10-20–2026-10-20'&&times()==='09:00–11:00',[times(),dates()]);
+  // 14. 끝 시간을 시작보다 앞으로 두면(0 이하) 길이 기준은 바꾸지 않음
+  typeOn(tf()[1],'0800');key(pick(),'Enter');
+  check('끝 08:00(시작보다 앞) 입력은 표시만',times()==='09:00–08:00');
+  typeOn(tf()[0],'10');key(pick(),'Enter');
+  check('시작 10:00 → 길이 120 으로 끝 12:00',times()==='10:00–12:00',times());
+  await closePopover();
+  // 15. 5분 단위가 아닌 값: 가장 가까운 행을 보여주고 건드리기 전까지 값 유지
+  chip('홀수분').click();await sleep(30);
+  check('10:07 그대로 표시',times()==='10:07–10:37');
+  tf()[0].click();await sleep(10);
+  check('휠은 가장 가까운 05 행',selOf('h')==='10'&&selOf('m')==='05'&&times()==='10:07–10:37');
+  key(pick(),'ArrowRight');key(pick(),'ArrowDown');
+  check('분 ↓ → 10:10, 끝 10:40(길이 30)',times()==='10:10–10:40',times());
+  await closePopover();
+});
+</script>
+</body></html>

@@ -381,6 +381,23 @@ button[disabled]:active{transform:none}
 .wgrid .blk.evb.dragging.cf{box-shadow:var(--eband),inset 0 0 0 2px var(--warn),0 10px 24px rgba(0,0,0,.32)}
 .wgrid .blk.evb.settling{z-index:4;box-shadow:var(--eband),0 8px 20px rgba(0,0,0,.28)}
 .wgrid .blk.evb.settling.cf{box-shadow:var(--eband),inset 0 0 0 2px var(--warn),0 8px 20px rgba(0,0,0,.28)}
+/* 약속 폼 시간 휠 피커: .tf 필드 버튼 + .tpick(시·분 두 열, 5줄, 가운데 .wsel 띠, 위아래 페이드). 스냅은 .wlist.snap 의 transition (reduced-motion 이면 즉시) */
+.md .f .tf{width:100%;text-align:left;font-variant-numeric:tabular-nums;font-weight:500;font-size:13px;line-height:1.3;padding:7px 10px;border:1px solid transparent;background:var(--field);border-radius:10px;color:var(--ink)}
+.md .f .tf.open{outline:2px solid var(--accent);outline-offset:1px}
+.tpick{--trow:32px;grid-column:1/-1;position:relative;display:flex;align-items:center;justify-content:center;gap:2px;height:calc(var(--trow)*5);border:1px solid var(--line);border-radius:12px;background:var(--panel);overflow:hidden;user-select:none;touch-action:none;outline:none}
+.tpick:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+.tpick::before,.tpick::after{content:'';position:absolute;left:0;right:0;height:calc(var(--trow)*1.5);pointer-events:none;z-index:2}
+.tpick::before{top:0;background:linear-gradient(var(--panel),transparent)}
+.tpick::after{bottom:0;background:linear-gradient(transparent,var(--panel))}
+.tpick .wsel{position:absolute;left:10px;right:10px;top:calc(var(--trow)*2);height:var(--trow);border-radius:8px;background:var(--field);pointer-events:none}
+.tpick .wheel{position:relative;width:64px;height:100%;overflow:hidden;cursor:grab;z-index:1}
+.tpick .wheel:active{cursor:grabbing}
+.tpick .wlist{will-change:transform}
+.tpick .wlist.snap{transition:transform .15s ease-out}
+.tpick .wrow{height:var(--trow);line-height:var(--trow);text-align:center;font-size:18px;color:var(--muted);font-variant-numeric:tabular-nums}
+.tpick .wrow.on{color:var(--ink);font-weight:600}
+.tpick .wheel.act .wrow.on{color:var(--accent)}
+.tpick .colon{font-size:18px;font-weight:600;color:var(--ink);z-index:1;padding-bottom:2px}
 /* 설정 > 구글 > 읽을 캘린더 목록: 체크박스 + 색 점 + 이름 */
 .callist .chk{margin:0 0 6px}
 .cdot{display:inline-block;width:10px;height:10px;border-radius:50%;flex:none;border:1px solid rgba(0,0,0,.12)}

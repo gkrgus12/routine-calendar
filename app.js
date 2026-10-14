@@ -1089,7 +1089,7 @@ function openSheet(ov,md,close){
   anim(md,{y:[56,0],opacity:[0,1]},{duration:250,bounce:.25});
   // 아래로 드래그: 입력·버튼·탭 위에서는 시작하지 않는다. 90px 넘게 내리면 닫고, 아니면 스프링으로 복귀
   let dg=null;
-  md.addEventListener('pointerdown',ev=>{if(ev.button!==0&&ev.pointerType==='mouse')return;if(ev.target.closest('input,select,textarea,button,a,label,.stabs,.swatches,.seg,.pvbox'))return;dg={y0:ev.clientY,dy:0};try{md.setPointerCapture(ev.pointerId)}catch(e){}md.classList.add('grabbing')});
+  md.addEventListener('pointerdown',ev=>{if(ev.button!==0&&ev.pointerType==='mouse')return;if(ev.target.closest('input,select,textarea,button,a,label,.stabs,.swatches,.seg,.pvbox,.tpick'))return;dg={y0:ev.clientY,dy:0};try{md.setPointerCapture(ev.pointerId)}catch(e){}md.classList.add('grabbing')});
   md.addEventListener('pointermove',ev=>{if(!dg)return;dg.dy=Math.max(0,ev.clientY-dg.y0);md.style.transform=`translateY(${dg.dy}px)`});
   const end=()=>{if(!dg)return;const dy=dg.dy;dg=null;md.classList.remove('grabbing');if(dy>90)close();else{md.style.transform='';anim(md,{y:[dy,0]},{duration:250,bounce:.3})}};
   md.addEventListener('pointerup',end);md.addEventListener('pointercancel',end);
@@ -1137,6 +1137,84 @@ function dismissPopover(ov,md){
   md._popCleanup&&md._popCleanup();
   anim(md,{scale:[1,.96],opacity:[1,0]},{duration:100,easing:'ease-in',fill:'forwards'}).then(()=>ov.remove());
 }
+/* ---------- 시간 휠 피커 (약속 폼): <input type=time> 대신 iOS 식 휠. 시 00~23 · 분 5분 단위 두 열, 5줄(TROW 32px), 가운데 행이 선택값 ----------
+   timePickerHost(): 폼 안에 한 번에 하나만 뜨는 피커. host.field(get,set) 이 값을 보여주는 .tf 버튼을 만들고, 누르면 host.anchor(끝 시간 label) 뒤에
+   .tpick 를 폼 전체 폭으로 펼친다. 조작: 휠(마우스 한 눈금 = 한 칸, 트랙패드는 TROW px 마다 한 칸), 드래그(5px 미만은 그 행 클릭), 키보드(↑↓ 한 칸,
+   ←→ 열 전환, 숫자 타이핑은 그 값으로 점프 — 시는 첫 자리가 3 이상이면 바로 확정하고 분 열로, 분은 두 자리를 5분 단위로 반올림, 1.2초 지나면 버퍼 초기화,
+   Enter/Esc 는 닫고 필드로 포커스, Tab 은 닫기). 바깥 클릭으로 닫힘. 값은 바뀔 때마다 set(v) 로 바로 반영된다. 스냅은 .wlist.snap 의 CSS transition
+   (prefers-reduced-motion 이면 즉시). 5분 단위가 아닌 값(구글 10:07 등)은 가장 가까운 행을 보여주되 건드리기 전까지 값은 그대로 둔다 */
+const TROW=32,TMINS=[0,5,10,15,20,25,30,35,40,45,50,55];
+function timePickerHost(){
+  const host={anchor:null,field,close,isOpen:()=>!!cur};
+  let cur=null;
+  const near5=m=>Math.max(0,Math.min(55,Math.round(m/5)*5));
+  const clampI=(w,i)=>Math.max(0,Math.min(w.values.length-1,i));
+  const onDoc=e=>{if(cur&&!cur.pick.contains(e.target)&&e.target!==cur.field)close()};
+  function close(){if(!cur)return;const c=cur;cur=null;clearTimeout(c.timer);c.pick.remove();c.field.classList.remove('open');document.removeEventListener('pointerdown',onDoc,true)}
+  function makeWheel(values,name){
+    const list=h('div',{class:'wlist'});values.forEach(v=>list.appendChild(h('div',{class:'wrow'},[pad(v)])));
+    const el=h('div',{class:'wheel','data-col':name},[list]);
+    const w={el,values,idx:0,onchange:null,activate:null,
+      paint(off,snap){list.classList.toggle('snap',!!snap);list.style.transform=`translateY(${(2-w.idx)*TROW-(off||0)}px)`;[...list.children].forEach((r,k)=>r.classList.toggle('on',k===w.idx))},
+      set(i,snap){w.idx=clampI(w,i);w.paint(0,snap)},
+      step(n){const i=clampI(w,w.idx+n);if(i===w.idx)return;w.idx=i;w.paint(0,true);w.onchange&&w.onchange()}};
+    let acc=0,dg=null;
+    el.addEventListener('wheel',e=>{e.preventDefault();w.activate&&w.activate();const d=e.deltaMode===1?e.deltaY*TROW:e.deltaY;
+      if(Math.abs(d)>=50){acc=0;w.step(Math.sign(d))}else{acc+=d;const n=Math.trunc(acc/TROW);if(n){acc-=n*TROW;w.step(n)}}},{passive:false});
+    el.addEventListener('pointerdown',e=>{if(e.button!==0&&e.pointerType==='mouse')return;e.preventDefault();w.activate&&w.activate();dg={y0:e.clientY,idx0:w.idx,last:w.idx,moved:false};try{el.setPointerCapture(e.pointerId)}catch(x){}});
+    el.addEventListener('pointermove',e=>{if(!dg)return;const dy=e.clientY-dg.y0;if(!dg.moved){if(Math.abs(dy)<5)return;dg.moved=true}
+      const pos=dg.idx0*TROW-dy;const i=clampI(w,Math.round(pos/TROW));w.idx=i;w.paint(Math.max(-TROW/2,Math.min(TROW/2,pos-i*TROW)),false);
+      if(i!==dg.last){dg.last=i;w.onchange&&w.onchange()}});
+    const up=e=>{if(!dg)return;const d=dg;dg=null;
+      if(!d.moved){const r=el.getBoundingClientRect();w.step(Math.floor((e.clientY-r.top)/TROW)-2);return} // 클릭: 그 행으로
+      w.paint(0,true)};
+    el.addEventListener('pointerup',up);el.addEventListener('pointercancel',()=>{if(dg){dg=null;w.paint(0,true)}});
+    return w;
+  }
+  function open(field,get,set){
+    if(cur&&cur.field===field)return;close();
+    const [hh,mm]=String(get()||'00:00').split(':').map(Number);
+    const wh=makeWheel(Array.from({length:24},(_,i)=>i),'h'),wm=makeWheel(TMINS,'m');
+    const pick=h('div',{class:'tpick',tabindex:'0',role:'group','aria-label':'시간 선택'},[h('div',{class:'wsel','aria-hidden':'true'}),wh.el,h('span',{class:'colon'},[':']),wm.el]);
+    const c=cur={field,get,set,pick,wh,wm,col:'h',typed:'',timer:null};
+    c.emit=()=>{const v=pad(wh.values[wh.idx])+':'+pad(wm.values[wm.idx]);if(v!==get()){set(v);field.textContent=v}};
+    c.setCol=k=>{c.col=k;c.typed='';wh.el.classList.toggle('act',k==='h');wm.el.classList.toggle('act',k==='m')};
+    wh.onchange=c.emit;wm.onchange=c.emit;wh.activate=()=>c.setCol('h');wm.activate=()=>c.setCol('m');
+    wh.set(hh||0);wm.set(TMINS.indexOf(near5(mm||0)));c.setCol('h');
+    pick.addEventListener('keydown',onKey);
+    host.anchor.after(pick);field.classList.add('open');
+    document.addEventListener('pointerdown',onDoc,true);
+    pick.focus({preventScroll:true});
+  }
+  function onKey(e){
+    if(!cur)return;const c=cur,w=c.col==='h'?c.wh:c.wm;const stop=()=>{e.preventDefault();e.stopPropagation()};
+    if(e.key==='ArrowUp'){stop();w.step(-1)}
+    else if(e.key==='ArrowDown'){stop();w.step(1)}
+    else if(e.key==='ArrowLeft'||e.key==='ArrowRight'){stop();c.setCol(c.col==='h'?'m':'h')}
+    else if(e.key==='Enter'||e.key==='Escape'){stop();const f=c.field;close();f.focus()}
+    else if(/^[0-9]$/.test(e.key)){stop();typeDigit(c,Number(e.key))}
+    else if(e.key==='Tab')close();
+  }
+  function typeDigit(c,d){
+    clearTimeout(c.timer);c.timer=setTimeout(()=>{if(cur===c)c.typed=''},1200);
+    c.typed+=String(d);
+    if(c.col==='h'){
+      if(c.typed.length===1&&d<=2){c.wh.set(d,true);c.emit();return} // 0~2 는 둘째 자리를 기다린다
+      const n=Number(c.typed);c.wh.set(n<=23?n:d,true);c.emit();c.setCol('m');
+    }else{
+      if(c.typed.length===1&&d<=5){c.wm.set(TMINS.indexOf(d*10),true);c.emit();return} // 십의 자리
+      const n=Number(c.typed);c.wm.set(TMINS.indexOf(near5(n)),true);c.emit();c.typed='';
+    }
+  }
+  function field(get,set){
+    const f=h('button',{type:'button',class:'tf',title:'시간 선택 — 휠·드래그·숫자 입력'},[get()]);
+    f.addEventListener('click',()=>{cur&&cur.field===f?close():open(f,get,set)});
+    f.addEventListener('keydown',e=>{if(e.key==='ArrowUp'||e.key==='ArrowDown'||/^[0-9]$/.test(e.key)){if(!cur||cur.field!==f)open(f,get,set);onKey(e)}});
+    f._sync=()=>{f.textContent=get()}; // 바깥에서 값이 바뀌면(시작을 따라 끝이 이동) 표시 갱신
+    return f;
+  }
+  return host;
+}
 function openEvent(ev,dateKey,preset,anchor){ // preset: 드래그 생성 시 {startTime,endTime}. anchor: {el,x,y} 팝오버 기준점(데스크톱)
   // 연결돼 있으면 새 약속과 구글 이벤트는 구글 캘린더(primary)에 직접 쓴다. 로컬 약속은 미연결 상태에서만 새로 만들 수 있고, 남아 있는 로컬 약속은 "임시" 로 편집·삭제만 된다
   const isNew=!ev;
@@ -1158,14 +1236,26 @@ function openEvent(ev,dateKey,preset,anchor){ // preset: 드래그 생성 시 {s
     cfBox.appendChild(h('div',{class:'cfbox'},[`활성 루틴과 ${cf.length}건 겹쳐요. 저장은 됩니다.`,ul]));
   }
   const afterCf=()=>{if(md._place)md._place()}; // 팝오버: 경고 박스로 높이가 바뀌면 자리를 다시 잡는다
-  const inp=(k,type,extra)=>h('input',{type,value:draft[k],...(extra||{}),oninput:(e)=>{draft[k]=e.target.value;if(k==='startDate'&&draft.endDate<draft.startDate){draft.endDate=draft.startDate;edI.value=draft.endDate}refreshCf();afterCf()}});
+  // 길이 유지: dur(분, 연속 = 종료일시 − 시작일시). 새 약속은 설정 기본 길이(드래그 생성은 그 범위), 기존 약속은 현재 길이. 시작일·시작 시간을 바꾸면
+  // followEnd() 가 끝 = 시작 + dur 로 종료일·끝 시간을 맞추고(24:00 을 넘으면 종료일 +1), 종료일·끝 시간을 직접 바꾸면 그때부터 그 길이가 기준(0 이하는 무시)
+  const durOf=d=>{if(!d.startDate||!d.endDate||!d.startTime||!d.endTime)return 0;const a=parse(d.startDate),b=parse(d.endDate);const n=Math.round((b-a)/60000)+toMin(d.endTime)-toMin(d.startTime);return isNaN(n)?0:n};
+  const freshNew=isNew&&!(preset&&preset.endTime);
+  let dur=freshNew?cfg('defaultDur'):(durOf(draft)>0?durOf(draft):cfg('defaultDur'));
+  const followEnd=()=>{if(!draft.startDate||!draft.startTime)return;const x=parse(draft.startDate);if(isNaN(x))return;x.setMinutes(toMin(draft.startTime)+dur);draft.endDate=ymd(x);draft.endTime=fromMin(x.getHours()*60+x.getMinutes());edI.value=draft.endDate;endF._sync()};
+  const endEdited=()=>{const d=durOf(draft);if(d>0)dur=d};
+  const inp=(k,type,extra)=>h('input',{type,value:draft[k],...(extra||{}),oninput:(e)=>{draft[k]=e.target.value;if(k==='startDate')followEnd();else if(k==='endDate')endEdited();refreshCf();afterCf()}});
   const edI=inp('endDate','date');
+  const tp=timePickerHost(); // 시작·끝 시간 휠 피커 (한 폼에 하나만 펼침)
+  const startF=tp.field(()=>draft.startTime,v=>{draft.startTime=v;followEnd();refreshCf();afterCf()});
+  const endF=tp.field(()=>draft.endTime,v=>{draft.endTime=v;endEdited();refreshCf();afterCf()});
+  const endLabel=h('label',null,['끝 시간',endF]);tp.anchor=endLabel; // 피커는 끝 시간 label 뒤(폼 전체 폭)에 펼쳐진다
+  if(freshNew)followEnd(); // 새 약속: 기본 길이로 끝을 맞춘다 (자정을 넘으면 종료일 +1)
   const form=h('div',{class:'f'},[
     h('label',{class:'full'},['제목',inp('title','text',{placeholder:'무슨 약속?',autofocus:''})]),
     h('label',null,['시작일',inp('startDate','date')]),
     h('label',null,['종료일',edI]),
-    h('label',null,['시작 시간',inp('startTime','time')]),
-    h('label',null,['끝 시간',inp('endTime','time')]),
+    h('label',null,['시작 시간',startF]),
+    endLabel,
     h('label',{class:'full'},['메모',h('textarea',{rows:'3',placeholder:'여러 줄 메모 (구글 캘린더의 설명과 같이 저장돼요)',oninput:e=>{draft.note=e.target.value}},[draft.note||''])]),
   ]);
   const calId=raw?(ev.cal&&ev.cal.id):null; // 수정·삭제는 이벤트가 속한 캘린더로, 추가는 primary
@@ -1212,7 +1302,7 @@ function openEvent(ev,dateKey,preset,anchor){ // preset: 드래그 생성 시 {s
   const pop=usePopover();if(pop)openPopover(ov,md,anchor);else openSheet(ov,md,close);
   refreshCf();afterCf();
   const onKey=(e)=>{if(e.key==='Escape'&&!busy)close()};document.addEventListener('keydown',onKey);
-  function close(){(pop?dismissPopover:dismissSheet)(ov,md);document.removeEventListener('keydown',onKey)}
+  function close(){tp.close();(pop?dismissPopover:dismissSheet)(ov,md);document.removeEventListener('keydown',onKey)}
   setTimeout(()=>{const t=md.querySelector('input[type=text]');t&&t.focus()},0);
 }
 /* settings modal (좌측 탭: 일반 / 약속 / 백업). 모든 뷰의 상단바 ⚙ 설정 버튼으로 연다 */

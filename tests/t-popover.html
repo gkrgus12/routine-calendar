@@ -93,7 +93,11 @@ run(async()=>{
   RC.view.type='week';RC.view.weekStart=new Date(2026,9,12);RC.render();await sleep(30);
   b=blockOf('C');r=rectOf(b);tap(b,r.left+10,r.top+10);await sleep(30);p=pop();
   const sd=p.querySelector('input[type=date]');sd.value='2026-10-12';sd.dispatchEvent(new Event('input',{bubbles:true}));
-  const st=p.querySelectorAll('input[type=time]');st[0].value='12:30';st[0].dispatchEvent(new Event('input',{bubbles:true}));st[1].value='13:30';st[1].dispatchEvent(new Event('input',{bubbles:true}));await sleep(60);
+  // 시간은 휠 피커(.tf 버튼): 첫 숫자는 필드에(피커를 열며 전달), 나머지는 피커에 키 입력
+  const key=(el,k)=>el.dispatchEvent(new KeyboardEvent('keydown',{key:k,bubbles:true,cancelable:true}));
+  const pk=()=>p.querySelector('.tpick');const tfs=p.querySelectorAll('.tf');
+  key(tfs[0],'1');for(const ch of '230')key(pk(),ch);key(pk(),'Enter');
+  key(tfs[1],'1');for(const ch of '330')key(pk(),ch);key(pk(),'Enter');await sleep(60);
   pr=rectOf(p);
   check('충돌 박스 생김',!!p.querySelector('.cfbox'));
   check('높이가 늘어도 화면 안(아래 12px 여백)',pr.bottom<=vh-M+1&&pr.top>=M-1,{top:pr.top,bottom:pr.bottom,vh});
