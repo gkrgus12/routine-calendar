@@ -30,7 +30,8 @@ function applyTheme(){const t=S.settings.theme;if(t==='light'||t==='dark')docume
 applyTheme();
 // 설정 기본값. 저장값에 없는 키는 기본값으로 읽는다(cfg). weekStart: 'mon'|'sun' (표시 순서만 바뀌고 데이터의 day 는 항상 0=월…6=일),
 // dayStart/dayEnd: 주간 뷰·편집 그리드가 보여줄 시간 범위(시). 범위 밖 루틴은 잘려 보일 뿐 데이터는 그대로
-const SETTINGS_DEFAULTS={defaultStart:'10:00',defaultDur:60,theme:'system',weekStart:'mon',dayStart:6,dayEnd:24,googleKeepLogin:true,routineAlpha:22,eventColor:0,hourHeight:'fit'};
+const SETTINGS_DEFAULTS={defaultStart:'10:00',defaultDur:60,theme:'system',weekStart:'mon',dayStart:6,dayEnd:24,googleKeepLogin:true,routineAlpha:22,eventColor:0,hourHeight:'fit',notifyOn:false,notifyEventMin:10,notifyRoutineMin:5};
+// notifyOn: 브라우저 알림 켬(권한이 granted 일 때만 실제 동작). notifyEventMin/notifyRoutineMin: 약속/루틴 시작 몇 분 전에 알릴지(0~1440)
 // hourHeight: 'fit'(그리드 영역 높이 ÷ 표시 시간 수, 최소 32px) 또는 고정 px(24~80). 세 그리드(편집·주간·일간) 공통. CSS 변수 --px 로 적용
 // routineAlpha: 일간·주간 루틴 블록과 편집 그리드 '다른 페이지 루틴'의 투명도(%). eventColor: 약속 색 팔레트(--e0..--e5) 인덱스
 const cfg=k=>S.settings[k]===undefined?SETTINGS_DEFAULTS[k]:S.settings[k];
@@ -96,6 +97,8 @@ function validateBackup(obj){
     if(st.routineAlpha!==undefined){if(!Number.isInteger(st.routineAlpha)||st.routineAlpha<5||st.routineAlpha>100)throw new Error('settings: routineAlpha 는 5~100 정수여야 해요');settings.routineAlpha=st.routineAlpha}
     if(st.eventColor!==undefined){if(!Number.isInteger(st.eventColor)||st.eventColor<0||st.eventColor>5)throw new Error('settings: eventColor 는 0~5 정수여야 해요');settings.eventColor=st.eventColor}
     if(st.hourHeight!==undefined){if(!(st.hourHeight==='fit'||(Number.isInteger(st.hourHeight)&&st.hourHeight>=24&&st.hourHeight<=80)))throw new Error("settings: hourHeight 는 'fit' 또는 24~80 정수여야 해요");settings.hourHeight=st.hourHeight}
+    if(st.notifyOn!==undefined){if(typeof st.notifyOn!=='boolean')throw new Error('settings: notifyOn 은 true/false 여야 해요');settings.notifyOn=st.notifyOn}
+    for(const k of ['notifyEventMin','notifyRoutineMin'])if(st[k]!==undefined){if(!Number.isInteger(st[k])||st[k]<0||st[k]>1440)throw new Error(`settings: ${k} 는 0~1440 정수여야 해요`);settings[k]=st[k]}
     if(st.dayStart!==undefined||st.dayEnd!==undefined){
       const a=st.dayStart===undefined?SETTINGS_DEFAULTS.dayStart:st.dayStart,b=st.dayEnd===undefined?SETTINGS_DEFAULTS.dayEnd:st.dayEnd;
       if(!Number.isInteger(a)||!Number.isInteger(b)||a<0||b>24||a>=b)throw new Error('settings: dayStart/dayEnd 는 0~24 정수이고 dayStart < dayEnd 여야 해요');
@@ -407,6 +410,62 @@ function pageConflicts(page){
   return res;
 }
 
+/* ---------- 알림 (Notification API): 앱이 열려 있을 때만. 1분 interval 과 render() 끝에서 notifyTick() 이 오늘·내일의 약속(로컬 + 연결된 구글 시간 이벤트)과
+   활성 페이지 루틴을 훑어 "시작 N분 전 ≤ 지금 < 시작" 인 항목을 알린다. 같은 항목(key ev:<id>:<날짜> / rt:<루틴 id>:<날짜>)은 한 번만 — NOTIFIED_KEY 에
+   오늘·내일 키만 보관(새로고침해도 중복 없음). 알림을 누르면 창 포커스 + 그 날짜 일간 뷰. 서비스 워커·소리·백그라운드·폰 알림 없음 ---------- */
+const NOTIFIED_KEY='routine-cal-notified'; // {날짜: [key…]}. 백업 데이터 키와 분리
+let clockNow=()=>new Date(); // 알림 검사의 현재 시각 (하네스가 가짜 시계로 바꿔 끼운다)
+const notifySupported=()=>typeof Notification==='function';
+const notifyPermission=()=>notifySupported()?Notification.permission:'unsupported'; // default | granted | denied | unsupported
+const notifyActive=()=>!!cfg('notifyOn')&&notifyPermission()==='granted';
+const saveNotified=v=>{try{localStorage.setItem(NOTIFIED_KEY,JSON.stringify(v))}catch(e){}};
+function loadNotified(today){ // 읽으면서 오늘보다 이전 날짜의 키는 버린다(날짜가 넘어가면 자동 정리)
+  let v={};try{const j=JSON.parse(localStorage.getItem(NOTIFIED_KEY)||'{}');if(j&&typeof j==='object'&&!Array.isArray(j))v=j}catch(e){}
+  let changed=false;for(const d in v)if(d<today){delete v[d];changed=true}
+  if(changed)saveNotified(v);return v;
+}
+// 알릴 후보 [{key,date,start(분),kind,title,sub,note}]: 오늘과 내일(자정 직전에 내일 새벽 항목을 알리기 위해). 종일·조각(tail/mid)은 제외
+function notifyCandidates(now){
+  const out=[];const t=new Date(now);t.setDate(t.getDate()+1);const dates=[ymd(now),ymd(t)];
+  const evs=S.events.concat(G.status==='on'?G.events:[]);
+  for(const ev of evs){if(ev.allDay||ev.seg==='tail'||ev.seg==='mid')continue;
+    for(const sg of eventSegs(ev.src||ev)){if(sg.part==='tail'||!dates.includes(sg.date))continue;
+      out.push({key:'ev:'+(ev.gid||ev.id)+':'+sg.date,date:sg.date,start:sg.s,kind:'ev',title:ev.title||'(제목 없음)',sub:fromMin(sg.s)+'–'+fromMin(sg.e)+(ev.cal&&!ev.cal.primary&&ev.cal.name?' · '+ev.cal.name:''),note:ev.note||''})}}
+  for(const it of activeItems())for(const sg of itemSegs(it)){if(sg.part==='tail')continue;
+    for(const d of dates){if(wd(parse(d))!==sg.day)continue;
+      out.push({key:'rt:'+it.id+':'+d,date:d,start:sg.s,kind:'rt',title:it.label||it.page.name,sub:it.page.name+' · '+it.start+'–'+it.end,note:''})}}
+  return out;
+}
+function notifyTick(){
+  if(!notifyActive())return;
+  const now=clockNow(),today=ymd(now),nowMin=now.getHours()*60+now.getMinutes();
+  const done=loadNotified(today);
+  for(const c of notifyCandidates(now)){
+    const lead=cfg(c.kind==='ev'?'notifyEventMin':'notifyRoutineMin');
+    const startAbs=(c.date===today?0:1440)+c.start; // 내일 항목은 +1440
+    if(!(startAbs-lead<=nowMin&&nowMin<startAbs))continue;
+    if((done[c.date]||[]).includes(c.key))continue;
+    (done[c.date]=done[c.date]||[]).push(c.key);saveNotified(done);
+    showNotification(c,startAbs-nowMin);
+  }
+}
+function showNotification(c,minsLeft){
+  const title=(c.kind==='ev'?'약속':'루틴')+` ${minsLeft}분 뒤: `+c.title;
+  const first=String(c.note||'').split(/\r?\n/).map(l=>l.trim()).find(l=>l);
+  try{
+    const n=new Notification(title,{body:c.sub+(first?'\n'+first:''),tag:c.key});
+    n.onclick=()=>{try{window.focus()}catch(e){}view.type='day';view.day=c.date;render();try{n.close()}catch(e){}}; // 창 앞으로 + 그 날짜 일간 뷰
+  }catch(e){glog('notification failed',e&&e.message)}
+}
+// 알림 켜기: 권한이 없으면 요청한다. 허용되면 설정을 켜고 바로 한 번 검사, 거부·취소면 설정은 꺼 둔다(탭이 안내)
+async function notifyEnable(){
+  if(!notifySupported()){toast('이 브라우저는 알림을 지원하지 않아요');return false}
+  let p=Notification.permission;
+  if(p==='default'){try{p=await Notification.requestPermission()}catch(e){p=Notification.permission}}
+  if(p==='granted'){S.settings.notifyOn=true;save();notifyTick();return true}
+  S.settings.notifyOn=false;save();return false;
+}
+
 /* =========================================================
    2. 렌더링 (사이드바, 월간, 주간, 페이지 편집기, 드래그 그리드)
    ========================================================= */
@@ -478,6 +537,7 @@ function render(){
   layoutSegs();animateKnob();settleBlock();
   if(lastViewKey!==null&&lastViewKey!==key)transitionMain(oldMain,main);
   lastViewKey=key;
+  notifyTick(); // 상태가 바뀔 때마다(저장 직후 포함) 곧 시작하는 약속·루틴을 알린다
 }
 function h(tag,attrs,children){
   const el=document.createElement(tag);
@@ -1316,13 +1376,13 @@ function exportBackup(){
   toast(`내보냈어요: ${name}`);
 }
 function openSettings(tab){
-  const TABS=[['general','일반'],['event','약속'],['google','구글'],['backup','백업']];
+  const TABS=[['general','일반'],['event','약속'],['google','구글'],['backup','백업'],['notify','알림']];
   let cur=TABS.some(([k])=>k===tab)?tab:'general';
   const ov=h('div',{class:'ov',onclick:(e)=>{if(e.target===ov)close()}});
   const tabs=h('div',{class:'stabs',role:'tablist'});
   const pane=h('div',{class:'spane'});
   function drawTabs(){tabs.innerHTML='';TABS.forEach(([k,label])=>tabs.appendChild(h('button',{class:k===cur?'sel':'',role:'tab','aria-selected':k===cur?'true':'false',onclick:()=>{cur=k;drawTabs();drawPane()}},[label])))}
-  function drawPane(){pane.innerHTML='';({general:generalTab,event:eventTab,google:googleTab,backup:backupTab})[cur](pane);layoutSegs(pane)}
+  function drawPane(){pane.innerHTML='';({general:generalTab,event:eventTab,google:googleTab,backup:backupTab,notify:notifyTab})[cur](pane);layoutSegs(pane)}
   // 값이 바뀌면 바로 저장·적용한다. 모달은 body 에 붙어 있어 render() 에 지워지지 않으므로 패널만 다시 그린다
   const apply=fn=>{fn();save();render();drawPane()};
   const seg=segControl;
@@ -1414,6 +1474,23 @@ function openSettings(tab){
     el.appendChild(file);el.appendChild(preview);
     el.appendChild(h('div',{class:'acts',style:'justify-content:flex-start'},[btnOver,btnMerge]));
   }
+  function notifyTab(el){
+    el.appendChild(h('div',{class:'sect'},['브라우저 알림']));
+    const p=notifyPermission();
+    el.appendChild(h('label',{class:'chk'},[h('input',{type:'checkbox',...(cfg('notifyOn')&&p==='granted'?{checked:''}:{}),...(p==='unsupported'||p==='denied'?{disabled:''}:{}),onchange:async e=>{
+      if(e.target.checked){const ok=await notifyEnable();if(!ok)toast(notifyPermission()==='denied'?'알림 권한이 거부돼 있어요. 브라우저 사이트 설정에서 허용하세요':'알림 권한을 허용하지 않았어요')}
+      else{S.settings.notifyOn=false;save()}
+      drawPane();
+    }}),'알림 켜기 — 약속·루틴이 시작하기 전에 브라우저 알림']));
+    el.appendChild(h('p',{class:'hint'},[p==='unsupported'?'이 브라우저는 알림을 지원하지 않아요.':p==='granted'?'권한: 허용됨':p==='denied'?'권한: 거부됨':'권한: 아직 요청하지 않음 — 켜면 브라우저가 허용 여부를 물어봐요.']));
+    if(p==='denied')el.appendChild(h('div',{class:'cfbox'},['알림 권한이 거부돼 있어요. 주소창 왼쪽 자물쇠(사이트 정보) → 알림 → 허용으로 바꾼 뒤 새로고침하면 켤 수 있어요.']));
+    el.appendChild(h('div',{class:'sect'},['얼마나 전에 알릴지']));
+    const num=(k,label)=>{const i=h('input',{type:'number',min:'0',max:'1440',step:'1',value:cfg(k),onchange:e=>{const v=Math.round(Number(e.target.value));if(!Number.isFinite(v)){drawPane();return}apply(()=>{S.settings[k]=Math.min(1440,Math.max(0,v))})}});return h('div',{class:'frow'},[h('label',null,[label,' ',i,' 분 전'])])};
+    el.appendChild(num('notifyEventMin','약속'));
+    el.appendChild(num('notifyRoutineMin','루틴 (활성 페이지만)'));
+    el.appendChild(h('div',{class:'frow'},[h('button',{...(p==='granted'?{}:{disabled:''}),onclick:()=>showNotification({key:'test:'+Date.now(),kind:'ev',title:'테스트 알림',sub:'이렇게 보여요',note:'',date:ymd(clockNow())},5)},['지금 테스트'])]));
+    el.appendChild(h('p',{class:'hint'},['앱이 열려 있을 때만 1분마다 검사해요(백그라운드·소리·폰 알림은 없어요). 같은 항목은 한 번만 알리고, 알림을 누르면 이 창이 앞으로 오면서 그 날짜의 일간 뷰로 가요.']));
+  }
   function googleTab(el){
     el.appendChild(h('div',{class:'sect'},['Google Calendar']));
     if(!googleClientId()){el.appendChild(h('p',{class:'hint'},['config.js 에 GOOGLE_CLIENT_ID 를 넣으면 연결할 수 있어요.']));return}
@@ -1460,8 +1537,18 @@ function openSettings(tab){
   ]);
   drawTabs();drawPane();onGoogleChange=drawPane;
   openSheet(ov,md,close);layoutSegs(md);
+  // 탭 전환 때 모달 높이가 바뀌지 않게: 다섯 탭을 차례로 그려 가장 긴 패널 높이를 재고, 모달 높이를 그 값(뷰포트 85% 이하)으로 고정한다.
+  // 짧은 탭은 아래가 비고, 넘치는 탭은 패널(.spane) 안에서만 스크롤. 창 크기가 바뀌면 다시 잰다. 하단 시트(720px 이하)도 같은 규칙
+  function fitHeight(){
+    const keep=cur;md.style.height='';
+    let max=0;TABS.forEach(([k])=>{cur=k;drawPane();max=Math.max(max,pane.scrollHeight)});
+    cur=keep;drawTabs();drawPane();
+    const chrome=md.getBoundingClientRect().height-pane.getBoundingClientRect().height; // 헤더·탭·테두리 등 패널 밖 높이
+    md.style.height=Math.min(Math.ceil(max+chrome),Math.floor(innerHeight*0.85))+'px';
+  }
+  fitHeight();addEventListener('resize',fitHeight);
   const onKey=(e)=>{if(e.key==='Escape')close()};document.addEventListener('keydown',onKey);
-  function close(){dismissSheet(ov,md);document.removeEventListener('keydown',onKey);onGoogleChange=null}
+  function close(){dismissSheet(ov,md);document.removeEventListener('keydown',onKey);removeEventListener('resize',fitHeight);onGoogleChange=null}
 }
 
 /* toast */
@@ -1478,7 +1565,8 @@ render();
 googleAutoReconnect(); // 이전 연결 기록이 있으면 조용히 재연결
 // OS 테마가 바뀌면 다시 그려서 라벨 변형색 등이 새 팔레트를 따르게
 matchMedia('(prefers-color-scheme: dark)').addEventListener('change',()=>{if(!S.settings.theme||S.settings.theme==='system')render()});
-setInterval(()=>{ // 현재 시각 선·pill 위치 갱신 (재렌더 없이)
+setInterval(()=>{ // 현재 시각 선·pill 위치 갱신 (재렌더 없이) + 알림 검사
+  notifyTick();
   const nm=new Date(),m=nm.getHours()*60+nm.getMinutes();
   document.querySelectorAll('.wgrid[data-h0]').forEach(g=>{const t=`calc(var(--px) * ${(m-Number(g.dataset.h0)*60)/60})`;g.querySelectorAll('.nowline,.nowpill').forEach(el=>el.style.top=t);const p=g.querySelector('.nowpill');if(p)p.textContent=pad(nm.getHours())+':'+pad(nm.getMinutes())});
 },60000);

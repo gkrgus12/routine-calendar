@@ -12,6 +12,8 @@
 | `t-event-drag.html` | 주간·일간 약속 블록 드래그 이동·리사이즈 (변형 `s=local` 로컬 약속, `s=google` 구글 이벤트 PATCH 스텁) |
 | `t-calendars.html` | 읽을 캘린더 선택 (변형 `s=list` 목록 스코프 있음, `s=nolist` 없음 → 재동의). calendarList·events 스텁 |
 | `t-timepick.html` | 약속 폼 시간 휠 피커와 길이 유지(시작 바꾸면 끝이 따라옴, 자정 넘김 종료일 +1) |
+| `t-notify.html` | 브라우저 알림 (변형 `s=grant`·`deny`·`none`; Notification 스텁 + 가짜 시계) |
+| `t-settings-height.html` | 설정 모달 고정 높이 (변형 `s=wide`·`narrow`·`short`) |
 | `t-popover.html` | 팝오버 배치 (변형 `s=wide` 1400×900, `s=narrow` 600×800 = 하단 시트) |
 
 새 하네스는 `t-<이름>.html` 로 만들고 `<script src="lib.js">` 다음에 `run(async()=>{ seed(...); await loadApp(); check('이름', 조건, 부가정보) })`. 변형이 필요하면 파일 첫 줄에 `<!-- variants: s=A s=B@600x800 -->`.

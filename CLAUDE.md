@@ -83,8 +83,19 @@
 | `routineAlpha` | number | 5~100(%), 기본 22. 일간·주간 뷰 루틴 블록(`.blk.rt`)과 편집 그리드 다른 페이지 루틴(`.blk.other`)의 불투명도. CSS 변수 `--routine-alpha` 로 적용 |
 | `hourHeight` | `'fit'` \| number | 기본 `'fit'`. 세 그리드 공통 시간당 높이. fit 은 그리드 영역 높이 ÷ 표시 시간 수(최소 32px, 그 밑이면 세로 스크롤), 숫자는 고정 px(24~80). `fitGrids()` 가 그리드마다 CSS 변수 `--px` 로 넣고 창 크기 변경 시 다시 계산 |
 | `eventColor` | number | 0~5, 기본 0. 약속 블록·칩 색(`--e0..--e5`, 루틴 팔레트와 겹치지 않는 핑크·레드·인디고·슬레이트·브라운·차콜). `eventStyle()` 이 배경과 글자색을 정한다 |
+| `notifyOn` | boolean | 기본 false. 브라우저 알림 켬. 실제 동작은 `Notification.permission==='granted'` 일 때만(`notifyActive()`) |
+| `notifyEventMin` | number | 0~1440, 기본 10. 약속 시작 몇 분 전에 알릴지 |
+| `notifyRoutineMin` | number | 0~1440, 기본 5. 활성 페이지 루틴 시작 몇 분 전에 알릴지 |
 
-저장값에 없는 설정 키는 `cfg(key)` 가 `SETTINGS_DEFAULTS` 로 채워 읽는다. 설정 모달(`openSettings(tab)`, 사이드바 맨 아래 ⚙ 설정)은 좌측 탭 일반(테마·주 시작 요일·시간 범위) / 약속(기본 시작·길이) / 구글(연결·해제) / 백업 으로 나뉘고, 값은 바꾸는 즉시 `save()`+`render()` 된다(저장 버튼 없음).
+저장값에 없는 설정 키는 `cfg(key)` 가 `SETTINGS_DEFAULTS` 로 채워 읽는다. 설정 모달(`openSettings(tab)`, 사이드바 맨 아래 ⚙ 설정)은 좌측 탭 일반(테마·주 시작 요일·시간 범위) / 약속(기본 시작·길이) / 구글(연결·해제·읽을 캘린더) / 백업 / 알림 으로 나뉘고, 값은 바꾸는 즉시 `save()`+`render()` 된다(저장 버튼 없음). **모달 높이는 탭 전환에 따라 변하지 않는다**: 열 때 `fitHeight()` 가 다섯 탭을 차례로 그려 가장 긴 패널 높이를 재고 `md.style.height` 를 그 값(뷰포트 85% 이하)으로 고정한다. 짧은 탭은 아래를 비워 두고, 넘치는 탭은 `.spane` 안에서만 스크롤. 창 크기가 바뀌면 다시 잰다(하단 시트도 같음)
+
+## 알림 (브라우저 Notification API)
+
+- 앱이 열려 있을 때만 동작(서비스 워커 없음). `notifyTick()` 이 1분 interval 과 `render()` 끝에서 돈다(저장 직후에도 바로 검사되므로 몇 분 뒤 약속을 만들면 즉시 알림). 현재 시각은 `clockNow()`(하네스가 가짜 시계로 바꾼다)
+- 후보(`notifyCandidates`): 오늘·내일 날짜의 약속(로컬 `S.events` + 연결 중이면 `G.events`; 종일과 `seg` tail/mid 조각 제외, `eventSegs` 의 tail 조각 제외)과 활성 페이지 루틴(`activeItems` × `itemSegs`, tail 조각 제외). 조건 `시작 − N분 ≤ 지금 < 시작`(내일 항목은 +1440). N 은 `notifyEventMin`/`notifyRoutineMin`
+- 중복 방지: key `ev:<id|gid>:<날짜>` / `rt:<루틴 id>:<날짜>` 를 `routine-cal-notified`({날짜:[key]}, 오늘·내일만 유지, 백업과 무관)에 적는다. 알림 `tag` 도 같은 key
+- 알림 제목 `약속 N분 뒤: 제목` / `루틴 N분 뒤: 라벨`, 본문 시간(+캘린더 이름, 메모 첫 줄). 클릭 → `window.focus()` + `view.type='day'; view.day=날짜; render()`
+- 설정 알림 탭(`notifyTab`): 켜기 체크(`notifyEnable()`: 권한 `default` 면 `requestPermission()`, 허용되면 `notifyOn=true` + 즉시 검사, 거부·취소면 false), 권한 상태 문구, 거부면 `.cfbox` 로 사이트 설정 안내(체크박스 비활성), 약속/루틴 N분 전 숫자 입력(0~1440), "지금 테스트" 버튼(권한 허용 시). 범위 밖: 백그라운드 알림, 소리, 폰 알림
 
 `load()` 는 저장값에 `pages` 와 `events` 가 있으면 그대로 쓰고, 아니면 빈 상태로 시작한다. 마이그레이션 로직은 없다.
 
@@ -177,7 +188,7 @@
    - 편집 그리드 블록 조작(`renderEditGrid`): 본체 드래그=이동(요일 간 이동 가능), 상단/하단 6px 핸들(`.rs`)=시작/끝 조절. 30분 스냅, 최소 30분, 06:00~24:00 안으로 클램프. 5px 미만 움직임은 클릭(이름 편집기). 드래그 중엔 시간 텍스트만 바꾸고 놓을 때 `save()`+`render()`. 블록을 누르면 열려 있던 이름 편집기는 `settleLabelEditor()` 로 렌더 없이 확정한다 (드래그 도중 재렌더 방지)
 3. **이벤트 모달 · 설정 · 토스트**: `openEvent`(제목·시작일·종료일·시작 시간·끝 시간·메모 textarea; 데스크톱은 `openPopover`, 좁으면 `openSheet`)
    - **시간 입력은 `timePickerHost()` 의 휠 피커**(`<input type=time>` 아님): `.tf` 버튼을 누르면 끝 시간 label 뒤에 `.tpick`(시 00~23 · 분 5분 단위, 5줄 × `TROW` 32px, 가운데 행 선택)가 폼 전체 폭으로 펼쳐진다. 휠(마우스 한 눈금 = 한 칸, 트랙패드는 32px 마다)·드래그(5px 미만은 행 클릭)·키보드(↑↓ 한 칸, ←→ 열 전환, 숫자 타이핑 점프 — 시는 첫 자리 3 이상이면 즉시 확정하고 분 열로, 분은 두 자리를 5분 반올림, 1.2초 뒤 버퍼 초기화, Enter/Esc 닫고 필드로 포커스). 바깥 클릭으로 닫힘, 한 폼에 하나만, 값은 바뀔 때마다 바로 반영. 스냅은 `.wlist.snap` 의 CSS transition(reduced-motion 이면 즉시). 5분 단위가 아닌 값(구글 10:07 등)은 가장 가까운 행을 보여주고 건드리기 전까지 값은 그대로. 루틴 표의 `<input type=time>` 은 그대로(범위 밖: 날짜 피커, 1분 단위)
-   - **길이 유지**: `dur`(분, 연속 = 종료일시 − 시작일시; 새 약속은 설정 기본 길이, 드래그 생성은 그 범위, 기존 약속은 현재 길이)를 두고 시작일·시작 시간을 바꾸면 `followEnd()` 가 끝 = 시작 + dur 로 종료일·끝 시간을 맞춘다(24:00 을 넘으면 종료일 +1). 종료일·끝 시간을 직접 바꾸면 `durOf()` 로 dur 를 다시 잡는다(0 이하면 무시). 새 약속은 열 때 한 번 `followEnd()` 로 기본 길이를 적용, `openSettings`(탭: 일반/약속/구글/백업, `exportBackup` 포함, 항상 하단 시트), `toast`
+   - **길이 유지**: `dur`(분, 연속 = 종료일시 − 시작일시; 새 약속은 설정 기본 길이, 드래그 생성은 그 범위, 기존 약속은 현재 길이)를 두고 시작일·시작 시간을 바꾸면 `followEnd()` 가 끝 = 시작 + dur 로 종료일·끝 시간을 맞춘다(24:00 을 넘으면 종료일 +1). 종료일·끝 시간을 직접 바꾸면 `durOf()` 로 dur 를 다시 잡는다(0 이하면 무시). 새 약속은 열 때 한 번 `followEnd()` 로 기본 길이를 적용, `openSettings`(탭: 일반/약속/구글/백업/알림, `exportBackup`·`fitHeight` 포함, 항상 하단 시트), `toast`
 
 상태가 바뀌면 `save()` 후 `render()` 를 호출하는 단순한 방식. 부분 갱신·가상 DOM 없음.
 

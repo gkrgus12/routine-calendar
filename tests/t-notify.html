@@ -1,0 +1,132 @@
+<!-- variants: s=grant s=deny s=none -->
+<!DOCTYPE html>
+<html lang="ko"><head><meta charset="utf-8"><title>브라우저 알림</title>
+<link rel="stylesheet" href="../styles.css"></head>
+<body><div class="app" id="app"></div>
+<script src="lib.js"></script>
+<script>
+// Notification 을 스텁해 권한 흐름과 알림 생성을 기록하고, RC.clockNow 를 가짜 시계로 바꿔 "시작 N분 전" 판정을 검사한다.
+// grant: 권한 요청 → 허용. deny: 요청 → 거부. none: Notification 자체가 없음
+const made=[];let permission='default';
+if(V==='none'){try{delete window.Notification}catch(e){}window.Notification=undefined}
+else{
+  window.Notification=class{
+    constructor(title,opts){this.title=title;this.opts=opts||{};this.closed=false;made.push(this)}
+    close(){this.closed=true}
+    static get permission(){return permission}
+    static requestPermission(){permission=V==='grant'?'granted':'denied';log('requestPermission →',permission);return Promise.resolve(permission)}
+  };
+}
+run(async()=>{
+  // 2026-10-14 = 수요일. 활성 페이지 수요일 14:03–15:00(수업), 15:00–16:00(안 울려야 함), 목요일 00:02(자정 뒤). 비활성 페이지 수요일 14:04(안 울려야 함)
+  seed({pages:[
+      {id:'pA',name:'학교',color:0,active:true,colorByLabel:false,items:[{id:'r1',day:2,start:'14:03',end:'15:00',label:'수업'},{id:'r2',day:2,start:'15:00',end:'16:00',label:'늦은 수업'},{id:'r3',day:3,start:'00:02',end:'01:00',label:'새벽'}]},
+      {id:'pB',name:'꺼짐',color:1,active:false,colorByLabel:false,items:[{id:'r9',day:2,start:'14:04',end:'15:00',label:'비활성'}]}],
+    events:[
+      {id:'e1',title:'치과',startDate:'2026-10-14',endDate:'2026-10-14',startTime:'14:00',endTime:'15:00',note:'3층\n주차'},
+      {id:'e2',title:'회의2',startDate:'2026-10-14',endDate:'2026-10-14',startTime:'14:20',endTime:'15:00'},
+      {id:'e3',title:'종일같은',startDate:'2026-10-14',endDate:'2026-10-16',startTime:'14:01',endTime:'14:30'},
+      {id:'e4',title:'새벽약속',startDate:'2026-10-15',endDate:'2026-10-15',startTime:'00:03',endTime:'01:00'}],
+    settings:{defaultStart:'10:00',defaultDur:60,weekStart:'mon',dayStart:6,dayEnd:24}});
+  await loadApp();
+  const at=(h,m,d)=>{RC.clockNow=()=>new Date(2026,9,d||14,h,m,0)};
+  at(13,0);
+  const tab=async()=>{btn('⚙ 설정').click();await sleep(40);btn('알림').click();await sleep(30)};
+  const box=()=>document.querySelector('.md.settings .chk input[type=checkbox]');
+  const paneText=()=>text('.md.settings');
+  const closeTab=async()=>{btn('닫기').click();await sleep(40)};
+  const titles=()=>made.map(n=>n.title);
+
+  if(V==='none'){
+    await tab();
+    check('미지원: 안내 + 체크박스 비활성',/지원하지 않아요/.test(paneText())&&box().disabled);
+    check('기본값 10 / 5',[...document.querySelectorAll('.md.settings input[type=number]')].map(i=>i.value).join('/')==='10/5');
+    at(13,58);RC.notifyTick();
+    check('알림 생성 없음',made.length===0);
+    return;
+  }
+  await tab();
+  check('알림 탭: 꺼짐, 권한 아직 요청 안 함',!box().checked&&!box().disabled&&/아직 요청하지 않음/.test(paneText()),paneText().slice(0,200));
+  check('기본값 10 / 5',[...document.querySelectorAll('.md.settings input[type=number]')].map(i=>i.value).join('/')==='10/5');
+  box().click();await sleep(80); // 체크 → requestPermission
+  if(V==='deny'){
+    check('거부: 설정은 꺼진 채, 체크박스 비활성, 안내 박스',RC.cfg('notifyOn')===false&&box().disabled&&!box().checked&&/거부/.test(paneText())&&!!document.querySelector('.md.settings .cfbox'),paneText().slice(0,300));
+    check('거부 토스트',/거부/.test(toastText()),toastText());
+    at(13,58);RC.notifyTick();
+    check('거부 상태에서는 알림 없음',made.length===0);
+    return;
+  }
+  // grant
+  check('허용: 설정 켜짐, 권한 허용됨 표시',RC.cfg('notifyOn')===true&&box().checked&&/허용됨/.test(paneText()),paneText().slice(0,200));
+  check('13:00 에는 아직 아무것도 없음',made.length===0);
+  await closeTab();
+  // 13:58: 치과 14:00(약속 10분 전 창 13:50~14:00), 수업 14:03(루틴 5분 전 창 13:58~14:03), 종일같은 14:01(오늘 조각). 회의2 14:20·늦은 수업·비활성 페이지는 제외
+  at(13,58);RC.notifyTick();
+  check('13:58 알림 3개',made.length===3,titles());
+  check('제목: 약속 2분 뒤 / 루틴 5분 뒤 / 약속 3분 뒤',titles().includes('약속 2분 뒤: 치과')&&titles().includes('루틴 5분 뒤: 수업')&&titles().includes('약속 3분 뒤: 종일같은'),titles());
+  const dental=made.find(n=>/치과/.test(n.title));
+  check('본문: 시간 + 메모 첫 줄, tag = key',dental.opts.body==='14:00–15:00\n3층'&&dental.opts.tag==='ev:e1:2026-10-14',dental.opts);
+  check('비활성 페이지·시간 밖 항목은 없음',!titles().some(t=>/비활성|늦은 수업|회의2/.test(t)));
+  // 중복 방지: 같은 분에 다시 검사해도, 1분 뒤에도 새 알림 없음. localStorage 에 기록
+  RC.notifyTick();at(13,59);RC.notifyTick();
+  check('중복 없음',made.length===3);
+  const rec=JSON.parse(localStorage.getItem('routine-cal-notified'));
+  check('기록: 오늘 날짜에 key 3개',rec&&rec['2026-10-14']&&rec['2026-10-14'].length===3,rec);
+  // render() 끝에서도 검사된다 (새로 들어온 창)
+  at(14,11);RC.render();
+  check('14:11 render → 회의2(14:20, 9분 뒤) 알림',titles().includes('약속 9분 뒤: 회의2'),titles());
+  // 클릭 → 일간 뷰 + 그 날짜
+  RC.view.type='month';RC.render();
+  dental.onclick();
+  check('알림 클릭: 일간 뷰, 그 날짜, 알림 닫힘',RC.view.type==='day'&&RC.view.day==='2026-10-14'&&dental.closed);
+  // 분 설정 변경: 루틴 30분 전 → 늦은 수업(15:00) 이 14:31 에 알림
+  await tab();
+  const inputs=()=>[...document.querySelectorAll('.md.settings input[type=number]')];
+  inputs()[1].value='30';inputs()[1].dispatchEvent(new Event('change',{bubbles:true}));await sleep(30);
+  check('루틴 30분 전으로 저장',RC.cfg('notifyRoutineMin')===30&&RC.S.settings.notifyRoutineMin===30);
+  await closeTab();
+  at(14,31);RC.notifyTick();
+  check('14:31 → 루틴 29분 뒤: 늦은 수업',titles().includes('루틴 29분 뒤: 늦은 수업'),titles());
+  // 구글 이벤트(연결 중)도 대상: 15:05 → 14:56 에 약속 9분 뒤
+  const G=RC.G;G.status='on';G.token='t';G.expiresAt=Date.now()+3600e3;
+  const dt=(d,t)=>{const x=RC.parse(d);x.setMinutes(RC.toMin(t));return x.toISOString()};
+  G.calCache={primary:{ym:'2026-10',events:RC.toLocalEvents({id:'g1',summary:'G 회의',start:{dateTime:dt('2026-10-14','15:05')},end:{dateTime:dt('2026-10-14','16:00')}})}};
+  RC.view.type='month';RC.view.ym='2026-10';RC.render(); // 조립
+  at(14,56);RC.notifyTick();
+  check('구글 이벤트 알림',titles().includes('약속 9분 뒤: G 회의'),titles());
+  // 자정 넘김: 23:55 → 내일 00:03 약속(8분 뒤), 목요일 00:02 루틴(7분 뒤, 루틴 30분 전 창 안)
+  at(23,55);RC.notifyTick();
+  check('자정 직전: 내일 새벽 약속·루틴',titles().includes('약속 8분 뒤: 새벽약속')&&titles().includes('루틴 7분 뒤: 새벽'),titles().slice(-3));
+  check('종일같은 약속의 내일 조각(14:01)은 아직 아님(오늘 것 한 번뿐)',titles().filter(t=>/종일같은/.test(t)).length===1);
+  // 다음 날 새벽: 오래된 날짜 키는 정리되고 내일 키는 남는다
+  at(0,1,15);RC.notifyTick();
+  const rec2=JSON.parse(localStorage.getItem('routine-cal-notified'));
+  check('날짜 넘기면 어제 키 정리, 오늘(15일) 키 유지',rec2&&!rec2['2026-10-14']&&rec2['2026-10-15']&&rec2['2026-10-15'].length>=2,rec2);
+  check('00:01 에 새벽약속·새벽 중복 없음',titles().filter(t=>/새벽/.test(t)).length===2);
+  // 완료 조건: 2분 뒤 약속을 만들면 저장 직후 알림 (14:33 에 14:35 약속). 가짜 구글 연결은 끈다(켜 둔 채면 폼이 구글로 POST 하려 한다)
+  G.status='off';G.token=null;G.events=[];G.calCache={};
+  at(14,33,14);RC.view.type='day';RC.view.day='2026-10-14';RC.render(); // (14일 기록은 15일 틱에서 정리됐으므로 여기서 늦은 수업이 한 번 더 울릴 수 있다 → n0 는 그 뒤에 잰다)
+  const n0=made.length;
+  btn('+ 약속').click();await sleep(30);
+  const md=document.querySelector('.md:not(.settings)');const ti=md.querySelector('input[type=text]');ti.value='곧 시작';ti.dispatchEvent(new Event('input',{bubbles:true}));
+  const key=(el,k)=>el.dispatchEvent(new KeyboardEvent('keydown',{key:k,bubbles:true,cancelable:true}));
+  const tfs=md.querySelectorAll('.tf');key(tfs[0],'1');const pk=()=>md.querySelector('.tpick');for(const ch of '435')key(pk(),ch);key(pk(),'Enter');
+  log('before add',{times:[...md.querySelectorAll('.tf')].map(f=>f.textContent),date:md.querySelector('input[type=date]').value,n0});
+  btn('추가').click();await sleep(30);
+  log('after add',{saved:RC.S.events.filter(e=>e.title==='곧 시작'),made:made.length,popover:!!document.querySelector('.md:not(.settings)'),toast:toastText(),rec:localStorage.getItem('routine-cal-notified')});
+  check('2분 뒤 약속 추가 → 저장 직후 알림 도착',made.length===n0+1&&made[made.length-1].title==='약속 2분 뒤: 곧 시작',titles().slice(-1));
+  // 끄기 → 더 이상 알림 없음
+  await tab();box().click();await sleep(30);
+  check('끄기: 설정 false',RC.cfg('notifyOn')===false&&!box().checked);
+  await closeTab();
+  const n1=made.length;at(14,58,14);RC.notifyTick();
+  check('꺼진 뒤에는 알림 없음(15:00 늦은 수업 창 안인데도)',made.length===n1);
+  // 백업 검증 키
+  const base={version:1,pages:[],events:[],settings:{defaultStart:'10:00',defaultDur:60,notifyOn:true,notifyEventMin:15,notifyRoutineMin:0}};
+  const r=RC.validateBackup(base);
+  check('백업: notify 키 통과·복사',!r.error&&r.data.settings.notifyOn===true&&r.data.settings.notifyEventMin===15&&r.data.settings.notifyRoutineMin===0,r.error);
+  check('백업: notifyOn 문자열 거부',!!RC.validateBackup(Object.assign({},base,{settings:Object.assign({},base.settings,{notifyOn:'yes'})})).error);
+  check('백업: notifyEventMin 1441 거부',!!RC.validateBackup(Object.assign({},base,{settings:Object.assign({},base.settings,{notifyEventMin:1441})})).error);
+});
+</script>
+</body></html>
